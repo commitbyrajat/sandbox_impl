@@ -1,0 +1,107 @@
+{
+  "profiles": {
+    "credit_cards": {
+      "description": "Credit card customers, cards, purchases, refunds and spending.",
+      "glossary": {
+        "card": "Credit card",
+        "spending": "Approved purchase amounts net of approved refunds, grouped by currency"
+      },
+      "common_instructions": [
+        "This workspace contains entirely synthetic credit card data from January-June 2026.",
+        "For spending, include APPROVED transactions only. Approved refunds are already negative amounts; do not subtract them twice.",
+        "Keep transaction currencies separate or explicitly filter one currency. Missing transactions in one currency do not imply zero spending in all currencies."
+      ],
+      "classifier_instructions": [
+        "Interpret customers, cards, purchases, refunds and merchants in the credit card domain of this workspace.",
+        "A request to show spending and propose a next action contains separate objectives. Treat the spending report as ready; clarify any undefined action framework without blocking the report."
+      ],
+      "planner_instructions": [
+        "Join card transactions to customers by customer_id and to credit cards by card_id. Aggregate at the requested customer/card/category grain before joining other aggregates.",
+        "Include the selected transaction status and currency in validation checks.",
+        "For a business request for a 95% uncertainty range around average observed daily spending, use a nonparametric bootstrap of daily net spending: 1000 resamples with replacement, seed 42, nearest-rank 2.5th and 97.5th percentiles, exact decimal amounts. Query observed daily totals first, then perform resampling in Python. Publish these analysis defaults and explain that missing days are not zero-filled and the interval is not a forecast. Do not ask the business user to choose a language or provide an algorithm."
+      ],
+      "executor_instructions": [
+        "Report spending amounts with their currencies and applied status filters. Preserve exact decimal precision.",
+        "Do not invent fraud scores, credit decisions or next-action policies from these sample transactions.",
+        "For the default 95% bootstrap confidence range: for each of 1000 resamples draw n observed daily totals with replacement and calculate its mean. Sort those 1000 means. Nearest-rank percentile indices are ceil((percent/100)*1000)-1: index 24 for 2.5 percent and index 974 for 97.5 percent. Do not pass percentages as proportions or multiply 2.5 or 97.5 directly by the sample count. Use seed 42. Return observed_days, mean_daily_inr, lower_95_ci_inr, upper_95_ci_inr, confidence_level_pct=95, resamples=1000, seed=42, and percentile levels 2.5 and 97.5. Check that the interval is non-degenerate for variable observed totals and that its lower bound is below its upper bound; report an error if the calculation fails."
+      ],
+      "tone": "Concise, practical and professional. Use familiar business language for a card operations manager.",
+      "summarizer_instructions": [
+        "Use card spending, purchases, refunds and merchant categories in the workspace sense. State currencies and periods clearly.",
+        "Lead with the requested spending insight. Explain net spending as approved purchases with approved refunds already deducted. Do not include SQL/code jargon unless requested."
+      ]
+    },
+    "smartwealth": {
+      "description": "SmartWealth mutual fund customers, asset management companies, schemes, folios and holdings.",
+      "glossary": {
+        "AMC": "Asset Management Company, which manages mutual fund schemes",
+        "NAV": "Net Asset Value per mutual fund unit",
+        "folio": "A mutual fund account with an Asset Management Company",
+        "holdings": "Mutual fund units and their market valuation as of the supplied NAV date",
+        "SIP": "Systematic Investment Plan"
+      },
+      "common_instructions": [
+        "This workspace contains synthetic SmartWealth mutual fund data from January-June 2026. All monetary amounts are INR.",
+        "AMC means Asset Management Company, not a listed entertainment company. Use the supplied glossary for other mutual fund terms.",
+        "Only COMPLETED transactions affect holdings; completed SIP transactions are included. Pending and failed transactions do not affect holdings.",
+        "Holding market values use the supplied NAV valuation date, not today.",
+        "Net invested amount is purchases minus redemption proceeds, not remaining tax cost basis. Market value minus net invested amount cannot establish unrealized gains.",
+        "Market values can be summed across schemes, but units and NAVs from different schemes are not interchangeable and must remain at scheme level.",
+        "Apply action policies configured in this profile or explicit rules provided in the question when the user asks for actions. Do not invent rules, thresholds or buy/sell recommendations. Do not assume policies are absent merely because no policy table exists."
+      ],
+      "classifier_instructions": [
+        "For compound holdings and next-action requests, keep the holdings objective ready. Mark actions ready when a configured policy or explicit rules in the question resolve the decision criteria; ask a focused clarification only when those criteria are genuinely missing.",
+        "Do not ask for an action framework already supplied in action_policies or in the user's question. Do not discuss actions or policy availability when the user asks only for holdings."
+      ],
+      "planner_instructions": [
+        "For holdings by AMC, plan market-value totals, valuation dates and descriptive counts. Do not introduce unrequested gains, investment returns or action scores.",
+        "Use holdings-to-scheme joins on scheme_id and holdings-to-AMC joins on amc_id. Do not join schemes to holdings only by amc_id, which multiplies rows.",
+        "Count distinct folios at AMC level; do not sum per-scheme folio counts, since one folio may hold multiple schemes.",
+        "Keep units and NAV at scheme level. Use market_value for AMC valuation totals.",
+        "Include INR currency, NAV date, completed transaction semantics and join cardinality in validation checks.",
+        "For an administrative request to split AMCs into review groups with roughly balanced total holding value, default to a largest-first greedy assignment: aggregate market value per AMC, sort descending with AMC-name tie breaks, and repeatedly place the next AMC in the currently lowest-value group with group-number tie breaks. Choose Python for the iterative assignment after SQL aggregation. Publish this approximate balancing method; do not claim an optimal allocation or turn it into investment recommendations. The user need not name SQL, Python or this algorithm."
+      ],
+      "executor_instructions": [
+        "For AMC summaries, report market values, valuation dates and descriptive counts supported by SQL. Do not add unrequested gains, returns, recommendations or total units across schemes.",
+        "Net invested amount is not remaining cost basis and cannot establish unrealized profit/loss. Label it accurately when requested.",
+        "Do not claim market_value equals units times NAV for every row unless a query actually verifies that assertion.",
+        "Use distinct folio counts at AMC level. Do not claim completed SIPs are excluded; they contribute to holdings.",
+        "When actions are requested, apply configured or user-provided rules against query evidence. If a requested action objective is deferred for missing criteria, leave its clarification to the application. Do not declare that no rules exist without checking the supplied policy context."
+      ],
+      "tone": "Concise and professional, suitable for a mutual fund operations manager. Use the workspace glossary and explain uncommon terms briefly.",
+      "summarizer_instructions": [
+        "Use AMC to mean Asset Management Company. Discuss holding market value, schemes and folios accurately, with INR and the NAV valuation date.",
+        "Preserve distinct folio counts and avoid interpreting net invested amounts as tax basis or unrealized gains. Apply only configured or user-provided action rules when actions are requested.",
+        "Summarize only evidence-backed results. Omit implementation chatter, internal retries, SQL and Python details unless the user asks.",
+        "Answer only the requested topics. For holdings-only questions, omit next-best-action, buy/sell, recommendation-engine and missing-policy disclaimers entirely.",
+        "For requested actions, use the supplied action_policies and any explicit user rules. If criteria are missing, report that specific gap; do not state that no policies exist when they have been provided.",
+        "Use verified_aggregates for overall totals. Do not perform mental arithmetic or introduce numbers absent from query/Python results or verified aggregates.",
+        "Attribute dates and other fields to executed_queries, not to guessed schema in the pre-execution plan or executor draft. The holdings valuation date is nav_date; do not invent a valuation_date column in the schemes table."
+      ],
+      "action_policies": {},
+      "topic_scopes": {
+        "next_actions": {
+          "request_pattern": "\\b(?:actions?|recommend\\w*|rebalanc\\w*|outreach|buy|sell)\\b",
+          "answer_pattern": "\\bnext[- ]best[- ]actions?\\b|\\bbuy\\s*/\\s*sell\\b|\\brecommendation rules?\\b|\\baction (?:polic\\w*|scores?)\\b"
+        }
+      },
+      "summary_additive_fields": [
+        "market_value",
+        "market_value_inr",
+        "total_market_value",
+        "total_market_value_inr",
+        "scheme_market_value",
+        "total_holding_value"
+      ],
+      "summary_partition_fields": [
+        "currency",
+        "currency_code",
+        "nav_date",
+        "valuation_date",
+        "first_nav_date",
+        "last_nav_date"
+      ],
+      "policy_absence_pattern": "\\bno\\s+(?:[\\w/-]+\\s+){0,6}(?:polic(?:y|ies)|rules?)\\b|\\b(?:polic(?:y|ies)|rules?)\\s+(?:are\\s+)?not\\s+(?:configured|available|provided)\\b"
+    }
+  }
+}

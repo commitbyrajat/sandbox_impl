@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: smartwealth
+      POSTGRES_USER: smartwealth
+      POSTGRES_PASSWORD: ${SMARTWEALTH_DB_PASSWORD:-smartwealth_local}
+    ports:
+      - "127.0.0.1:${SMARTWEALTH_DB_PORT:-5433}:5432"
+    volumes:
+      - smartwealth_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartwealth -d smartwealth"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  smartwealth_data:

@@ -1,0 +1,77 @@
+{
+  "models": {
+    "qwen-coder": {
+      "model_name": "qwen-coder"
+    },
+    "ornith-reasoner": {
+      "model_name": "ornith-reasoner"
+    }
+  },
+  "tenants": {
+    "1": {
+      "name": "Tenant 1",
+      "model_id": "qwen-coder",
+      "workspaces": {
+        "1": {
+          "name": "Credit Cards",
+          "sources": {
+            "credit_cards": {
+              "kind": "parquet",
+              "location": "data/parquet",
+              "description": "Credit card customers, cards, purchases, refunds, declines, merchants, spending, channels and currencies.",
+              "tables": {
+                "cc_customers": "customers.parquet",
+                "cc_credit_cards": "credit_cards.parquet",
+                "cc_transactions": "transactions.parquet"
+              },
+              "relationships": [
+                "cc_customers.customer_id = cc_credit_cards.customer_id",
+                "cc_transactions.card_id = cc_credit_cards.card_id",
+                "cc_transactions.customer_id = cc_customers.customer_id"
+              ],
+              "notes": []
+            }
+          },
+          "domain_profile": "credit_cards"
+        }
+      }
+    },
+    "2": {
+      "name": "Tenant 2",
+      "model_id": "ornith-reasoner",
+      "workspaces": {
+        "2": {
+          "name": "SmartWealth",
+          "sources": {
+            "smartwealth": {
+              "kind": "postgres",
+              "location": "public",
+              "description": "SmartWealth mutual fund customers, AMCs, schemes, folios, purchases, SIPs, redemptions, holdings, NAVs and portfolio valuations.",
+              "tables": {
+                "sw_customers": "customers",
+                "sw_amcs": "amcs",
+                "sw_schemes": "schemes",
+                "sw_folios": "folios",
+                "sw_transactions": "transactions",
+                "sw_holdings": "holdings"
+              },
+              "relationships": [
+                "sw_folios.customer_id = sw_customers.customer_id",
+                "sw_folios.amc_id = sw_amcs.amc_id",
+                "sw_schemes.amc_id = sw_amcs.amc_id",
+                "sw_transactions.folio_id = sw_folios.folio_id",
+                "sw_transactions.scheme_id = sw_schemes.scheme_id",
+                "sw_holdings.customer_id = sw_customers.customer_id",
+                "sw_holdings.folio_id = sw_folios.folio_id",
+                "sw_holdings.scheme_id = sw_schemes.scheme_id",
+                "sw_holdings.amc_id = sw_amcs.amc_id"
+              ],
+              "notes": []
+            }
+          },
+          "domain_profile": "smartwealth"
+        }
+      }
+    }
+  }
+}

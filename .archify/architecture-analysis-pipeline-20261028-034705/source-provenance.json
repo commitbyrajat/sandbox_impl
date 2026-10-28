@@ -1,0 +1,28 @@
+{
+  "workspace_head": null,
+  "workspace_origin": null,
+  "note": "The workspace is uncommitted and has no origin. Evidence refers to a separate committed local snapshot, not project HEAD.",
+  "snapshot_root": "/var/folders/v1/fpjp0qvn30ndhvrmdqz4vd0r0000gn/T/pipeline-architecture-evidence-pgx1ddqf",
+  "snapshot_url": "https://local-snapshot.invalid/analysis-pipeline.git",
+  "snapshot_revision": "a2ce38901d228ed0e0e6817cb383090946921045",
+  "snapshot_files": [
+    "agent.py",
+    "pipeline.py",
+    "planning.py",
+    "execution.py",
+    "data_access.py",
+    "summarization.py",
+    "model_config.py",
+    "plan_publication.py",
+    "domain_instructions.py",
+    "domain_instructions.json",
+    "datasource_mapping.py",
+    "datasource.json",
+    "main.py",
+    "pyproject.toml",
+    "data/container/docker-compose.yml"
+  ],
+  "workspace_status": "?? .env.example\n?? .gitignore\n?? .idea/\n?? .python-version\n?? README.md\n?? agent.py\n?? data/\n?? data_access.py\n?? datasource.json\n?? datasource_mapping.py\n?? domain_instructions.json\n?? domain_instructions.py\n?? execution.py\n?? main.py\n?? model_config.py\n?? pipeline.py\n?? plan_publication.py\n?? planning.py\n?? pyproject.toml\n?? queries/\n?? summarization.py\n?? tests/\n?? uv.lock\n",
+  "snapshot_storage_uri": "file:///var/folders/v1/fpjp0qvn30ndhvrmdqz4vd0r0000gn/T/pipeline-architecture-evidence-pgx1ddqf",
+  "identity_note": "Reserved .invalid origin identifies only the local fixture; no hosted remote exists and links are local-only."
+}

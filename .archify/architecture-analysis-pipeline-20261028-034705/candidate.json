@@ -1,0 +1,498 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Tenant-scoped analysis pipeline",
+    "output": ".archify/architecture-analysis-pipeline-20261028-034705/analysis-pipeline.html",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "repository": {
+      "url": "https://local-snapshot.invalid/analysis-pipeline.git",
+      "revision": "a2ce38901d228ed0e0e6817cb383090946921045",
+      "link_mode": "local-only"
+    }
+  },
+  "components": [
+    {
+      "id": "business-user",
+      "type": "external",
+      "label": "Business user",
+      "sublabel": "Question + tenant + workspace",
+      "pos": [
+        20,
+        240
+      ],
+      "size": [
+        170,
+        80
+      ],
+      "sources": [
+        {
+          "path": "agent.py",
+          "line": 54,
+          "end_line": 69
+        }
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "frontend",
+      "label": "agent.py",
+      "sublabel": "CLI and public entry points",
+      "pos": [
+        240,
+        240
+      ],
+      "size": [
+        170,
+        80
+      ],
+      "sources": [
+        {
+          "path": "agent.py",
+          "line": 20,
+          "end_line": 51
+        }
+      ]
+    },
+    {
+      "id": "chain",
+      "type": "backend",
+      "label": "Responsibility chain",
+      "sublabel": "Injectable stages and adapters",
+      "pos": [
+        460,
+        240
+      ],
+      "size": [
+        200,
+        90
+      ],
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 78,
+          "end_line": 95
+        },
+        {
+          "path": "pipeline.py",
+          "line": 102,
+          "end_line": 181
+        },
+        {
+          "path": "pipeline.py",
+          "line": 203,
+          "end_line": 218
+        }
+      ]
+    },
+    {
+      "id": "summary",
+      "type": "backend",
+      "label": "Domain summary",
+      "sublabel": "Vocabulary + tone; no tools",
+      "pos": [
+        750,
+        240
+      ],
+      "size": [
+        190,
+        80
+      ],
+      "sources": [
+        {
+          "path": "summarization.py",
+          "line": 24,
+          "end_line": 54
+        }
+      ]
+    },
+    {
+      "id": "answer",
+      "type": "external",
+      "label": "Business answer",
+      "sublabel": "Evidence + deferred questions",
+      "pos": [
+        1020,
+        240
+      ],
+      "size": [
+        180,
+        80
+      ],
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 191,
+          "end_line": 200
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "type": "security",
+      "label": "Scope and model adapter",
+      "sublabel": "Validate ownership; pick model",
+      "pos": [
+        220,
+        145
+      ],
+      "size": [
+        210,
+        80
+      ],
+      "sources": [
+        {
+          "path": "datasource_mapping.py",
+          "line": 81,
+          "end_line": 90
+        },
+        {
+          "path": "model_config.py",
+          "line": 12,
+          "end_line": 23
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "cloud",
+      "label": "LiteLLM API",
+      "sublabel": "qwen-coder / ornith-reasoner",
+      "pos": [
+        450,
+        30
+      ],
+      "size": [
+        220,
+        80
+      ],
+      "sources": [
+        {
+          "path": "model_config.py",
+          "line": 18,
+          "end_line": 22
+        },
+        {
+          "path": "planning.py",
+          "line": 193,
+          "end_line": 217
+        },
+        {
+          "path": "summarization.py",
+          "line": 29,
+          "end_line": 49
+        }
+      ]
+    },
+    {
+      "id": "guidance",
+      "type": "database",
+      "label": "Domain guidance adapter",
+      "sublabel": "Scoped glossary and role rules",
+      "pos": [
+        750,
+        500
+      ],
+      "size": [
+        190,
+        80
+      ],
+      "sources": [
+        {
+          "path": "domain_instructions.py",
+          "line": 36,
+          "end_line": 52
+        }
+      ]
+    },
+    {
+      "id": "executor",
+      "type": "backend",
+      "label": "Plan executor",
+      "sublabel": "Ordered tools; complete evidence",
+      "pos": [
+        460,
+        500
+      ],
+      "size": [
+        200,
+        90
+      ],
+      "sources": [
+        {
+          "path": "execution.py",
+          "line": 75,
+          "end_line": 111
+        },
+        {
+          "path": "execution.py",
+          "line": 122,
+          "end_line": 170
+        },
+        {
+          "path": "execution.py",
+          "line": 174,
+          "end_line": 187
+        }
+      ]
+    },
+    {
+      "id": "datafusion",
+      "type": "backend",
+      "label": "DataFusion + data adapters",
+      "sublabel": "Host SQL; scoped source loading",
+      "pos": [
+        460,
+        770
+      ],
+      "size": [
+        220,
+        90
+      ],
+      "sources": [
+        {
+          "path": "data_access.py",
+          "line": 47,
+          "end_line": 92
+        },
+        {
+          "path": "main.py",
+          "line": 26,
+          "end_line": 85
+        }
+      ]
+    },
+    {
+      "id": "monty",
+      "type": "security",
+      "label": "Monty worker",
+      "sublabel": "Python on completed query rows",
+      "pos": [
+        240,
+        770
+      ],
+      "size": [
+        190,
+        90
+      ],
+      "sources": [
+        {
+          "path": "execution.py",
+          "line": 138,
+          "end_line": 170
+        }
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL container",
+      "sublabel": "Tenant 2 / workspace 2 snapshot",
+      "pos": [
+        460,
+        1050
+      ],
+      "size": [
+        220,
+        80
+      ],
+      "sources": [
+        {
+          "path": "main.py",
+          "line": 43,
+          "end_line": 84
+        },
+        {
+          "path": "datasource.json",
+          "line": 39,
+          "end_line": 56
+        }
+      ]
+    },
+    {
+      "id": "parquet",
+      "type": "database",
+      "label": "Parquet files",
+      "sublabel": "Tenant 1 / workspace 1 scan",
+      "pos": [
+        750,
+        1050
+      ],
+      "size": [
+        190,
+        80
+      ],
+      "sources": [
+        {
+          "path": "main.py",
+          "line": 36,
+          "end_line": 41
+        },
+        {
+          "path": "datasource.json",
+          "line": 11,
+          "end_line": 25
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Application runtimes",
+      "wraps": [
+        "cli",
+        "chain",
+        "scope",
+        "summary",
+        "guidance",
+        "executor",
+        "datafusion",
+        "monty"
+      ],
+      "pad": 24
+    },
+    {
+      "kind": "security-group",
+      "label": "Sandbox subprocess",
+      "wraps": [
+        "monty"
+      ],
+      "pad": 18
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-entry",
+      "from": "business-user",
+      "to": "cli",
+      "label": "Ask",
+      "variant": "emphasis"
+    },
+    {
+      "id": "entry-chain",
+      "from": "cli",
+      "to": "chain",
+      "label": "Run",
+      "variant": "emphasis"
+    },
+    {
+      "id": "chain-summary",
+      "from": "chain",
+      "to": "summary",
+      "label": "Final stage",
+      "variant": "emphasis"
+    },
+    {
+      "id": "summary-answer",
+      "from": "summary",
+      "to": "answer",
+      "label": "Return",
+      "variant": "emphasis"
+    },
+    {
+      "id": "chain-scope",
+      "from": "chain",
+      "to": "scope",
+      "label": "Validate scope",
+      "variant": "security"
+    },
+    {
+      "id": "chain-model",
+      "from": "chain",
+      "to": "llm",
+      "label": "Classify / plan"
+    },
+    {
+      "id": "summary-model",
+      "from": "summary",
+      "to": "llm",
+      "label": "Summarize"
+    },
+    {
+      "id": "summary-domain",
+      "from": "summary",
+      "to": "guidance",
+      "label": "Load scoped tone"
+    },
+    {
+      "id": "chain-executor",
+      "from": "chain",
+      "to": "executor",
+      "label": "After publication"
+    },
+    {
+      "id": "executor-sql",
+      "from": "executor",
+      "to": "datafusion",
+      "label": "Read-only SQL"
+    },
+    {
+      "id": "executor-python",
+      "from": "executor",
+      "to": "monty",
+      "label": "If Python required",
+      "variant": "security"
+    },
+    {
+      "id": "adapter-postgres",
+      "from": "datafusion",
+      "to": "postgres",
+      "label": "Psycopg snapshot"
+    },
+    {
+      "id": "adapter-parquet",
+      "from": "datafusion",
+      "to": "parquet",
+      "label": "Direct scan"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Chain of responsibility",
+      "items": [
+        "Resolve -> classify -> plan -> publish -> load -> execute -> summarize.",
+        "Each handler forwards a request-local context to its successor.",
+        "Injected service adapters and stages can be replaced independently."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Execution conditions",
+      "items": [
+        "Plan JSON is published before data access; publication failure stops the chain.",
+        "SQL-only plans do not start Monty. No-execution plans skip loading and execution.",
+        "Preview requests stop after classification, planning or publication."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "DataFusion is outside Monty",
+      "items": [
+        "DataFusion and Psycopg execute in the host Python process.",
+        "Monty receives complete typed rows; it has no database or filesystem access.",
+        "The host passes Python outputs and SQL rows to the final summarizer."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Domain and model mapping",
+      "items": [
+        "Tenant 1: qwen-coder; workspace 1: credit cards.",
+        "Tenant 2: ornith-reasoner; workspace 2: SmartWealth.",
+        "All four model roles use the tenant model and their own domain instructions."
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Local source evidence",
+      "items": [
+        "The workspace has no commits or remote; citations use a separate local snapshot.",
+        "See source-provenance.json for the snapshot revision and copied file list.",
+        "Summary uses evidence and configured tone; it has no data or code tools."
+      ]
+    }
+  ]
+}

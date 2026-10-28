@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "0dfcdb5b-3b4a-4819-898a-d33820cc3dcc",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/architecture-analysis-pipeline-20261028-034705/candidate.json",
+  "output": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/architecture-analysis-pipeline-20261028-034705/analysis-pipeline.html",
+  "specification": {
+    "sha256": "80d0239aa96f639a1dd17a19e938e5e8154e0bb49c85f311eb6ef14be37fc4a4",
+    "bytes": 10299
+  },
+  "artifact": {
+    "sha256": "b9f3719462feea3ccd289e9f2da024534a954803be32bd801de63630fa0195f9",
+    "bytes": 776235
+  }
+}
