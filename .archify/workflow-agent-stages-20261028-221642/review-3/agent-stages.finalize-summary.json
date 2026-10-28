@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-agent-stages-20261028-221642/candidate.json",
+    "sha256": "cc0ea061506dedb96a640ae1599eda8ab27da857685a8324c13ea175b6c9a366",
+    "bytes": 12291
+  },
+  "artifact": {
+    "path": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-agent-stages-20261028-221642/agent-stages.html",
+    "sha256": "f2db4e389189f31f654eed0e30ec474b6c6fbf37e5a090c3ad08634402f4a534",
+    "bytes": 771768
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-agent-stages-20261028-221642/review-3/agent-stages.finalize.json",
+    "summaryReceipt": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-agent-stages-20261028-221642/review-3/agent-stages.finalize-summary.json",
+    "browserCheckReceipt": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-agent-stages-20261028-221642/review-3/agent-stages.browser-check.json"
+  },
+  "update": {
+    "status": "update_available",
+    "installedVersion": "3.0.1",
+    "availableVersion": "3.2.0",
+    "releaseNotes": "https://github.com/tt-a1i/archify/releases/tag/v3.2.0",
+    "severity": "normal",
+    "checkedAt": "2026-10-27T22:21:40.815Z",
+    "source": "cache",
+    "noticeRequired": true,
+    "noticeText": "Archify update: 3.0.1 → 3.2.0. A previous check at 2026-10-27T22:21:40.815Z found a newer release. Release notes: https://github.com/tt-a1i/archify/releases/tag/v3.2.0. The installed Skill has not changed; ask to snooze or ignore this reminder.",
+    "eventKey": "archify@sha256:70e210265c59f24dcbdf2a502ff671104b5454e7ee7d3554aecd86bad32384f5"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 1222
+}

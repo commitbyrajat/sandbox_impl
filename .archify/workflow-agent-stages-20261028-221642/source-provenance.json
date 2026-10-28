@@ -1,0 +1,28 @@
+{
+  "repository": {
+    "url": "git@github.com:commitbyrajat/sandbox_impl.git",
+    "revision": "4bbf89d2d5d592c43e7df88c6d3a142733dd4734",
+    "link_mode": "local-only"
+  },
+  "workspace_head": "4bbf89d2d5d592c43e7df88c6d3a142733dd4734",
+  "workspace_origin": "git@github.com:commitbyrajat/sandbox_impl.git",
+  "working_tree_status_at_authoring": "?? .archify/architecture-analysis-pipeline-20261028-221642/\n?? .archify/workflow-agent-stages-20261028-221642/",
+  "source_sha256": {
+    "agent.py": "25aba1d68cb379f5437e57ce196e6049ef2edb90ce8549a505ec2d7315e9b905",
+    "data_access.py": "29b4e057541d5fd706a4814c10b070228eb2c25995e5adaadfe8f312386bc909",
+    "datasource.json": "63bc4a7eba3d14f245657568f075e9ea47d661af74ed3b9f2f90f8f54ceaf101",
+    "datasource_mapping.py": "6c84e3b81649ffbc0de5245ddfeb42fa7076d324f7199eb82b8e3d2eadc18ab3",
+    "domain_instructions.json": "9abed56b0e2319536b55953f3f6e1b3e3fa0adbe9c50ac916155a83854bbb257",
+    "domain_instructions.py": "84801d5e5351abf2f3af4d14a064ae2440c9697db7ec9335e4254009b0ed501b",
+    "execution.py": "165879443fecf88d036d93ae1e7b411f3bcc246d982db9713893ff8abf3a79c9",
+    "main.py": "059e78d4b85ba8cf04a9a55aaf3e3ea47134910708765db46e9885cd67844a69",
+    "model_config.py": "45bee1958d946bab6fef937d32b2d177a3737c8a65de3c93b935f2f188f62ac2",
+    "pipeline.py": "37519a633b8c2b71a906f1fd92606998dbbf160c43fe1f9586aa7c133d1838d6",
+    "plan_publication.py": "b7fa7ed5131dca20b205f36c7875d4707410ee6b47b18176f90b6526935a2b29",
+    "planning.py": "3e9b873c34e0c66918e94ad9d4958e7fa79b2e83a3b17fed16d70286ed0a4ec4",
+    "runtime.py": "5aff1e5e321f91286d8b42847898c9071b347cac24cdb4bc7ba6f8dbcf85fa98",
+    "summarization.py": "587734b1778c85692973f4af61c801d32fa010b0097b65cf245fd8f4b15b24d3",
+    "summary_evidence.py": "0ba7e661c1a686d2a2e091483980dfb6eead685a5b6e9be8f29ee97bcff49b6c"
+  },
+  "note": "All cited source bytes verified against project HEAD. Local-only links preserve the SSH origin."
+}

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "d713d6de-67f6-4cd5-9f8c-cdab206bedce",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-agent-stages-20261028-221642/candidate.json",
+  "output": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-agent-stages-20261028-221642/agent-stages.html",
+  "specification": {
+    "sha256": "cc0ea061506dedb96a640ae1599eda8ab27da857685a8324c13ea175b6c9a366",
+    "bytes": 12291
+  },
+  "artifact": {
+    "sha256": "f2db4e389189f31f654eed0e30ec474b6c6fbf37e5a090c3ad08634402f4a534",
+    "bytes": 771768
+  }
+}

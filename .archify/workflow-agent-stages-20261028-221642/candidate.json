@@ -1,0 +1,517 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Agent stages and responsibilities",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "git@github.com:commitbyrajat/sandbox_impl.git",
+      "revision": "4bbf89d2d5d592c43e7df88c6d3a142733dd4734",
+      "link_mode": "local-only"
+    },
+    "output": ".archify/workflow-agent-stages-20261028-221642/agent-stages.html"
+  },
+  "components": [
+    {
+      "id": "resolve",
+      "type": "security",
+      "label": "1. Resolve",
+      "sublabel": "Validate tenant / workspace",
+      "tag": "RequestScope",
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 133,
+          "end_line": 145
+        },
+        {
+          "path": "datasource_mapping.py",
+          "line": 81,
+          "end_line": 90
+        }
+      ],
+      "pos": [
+        420,
+        40
+      ],
+      "size": [
+        240,
+        90
+      ]
+    },
+    {
+      "id": "classify",
+      "type": "backend",
+      "label": "2. Classify",
+      "sublabel": "Identify business intent",
+      "tag": "QuestionIntent",
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 148,
+          "end_line": 158
+        },
+        {
+          "path": "planning.py",
+          "line": 218,
+          "end_line": 242
+        }
+      ],
+      "pos": [
+        420,
+        220
+      ],
+      "size": [
+        240,
+        90
+      ]
+    },
+    {
+      "id": "plan",
+      "type": "backend",
+      "label": "3. Plan",
+      "sublabel": "Choose sources and method",
+      "tag": "ExecutionPlan",
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 161,
+          "end_line": 173
+        },
+        {
+          "path": "planning.py",
+          "line": 245,
+          "end_line": 277
+        },
+        {
+          "path": "planning.py",
+          "line": 118,
+          "end_line": 131
+        }
+      ],
+      "pos": [
+        420,
+        400
+      ],
+      "size": [
+        240,
+        90
+      ]
+    },
+    {
+      "id": "publish",
+      "type": "database",
+      "label": "4. Publish",
+      "sublabel": "Save reviewable plan",
+      "tag": "Artifact path",
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 176,
+          "end_line": 190
+        },
+        {
+          "path": "plan_publication.py",
+          "line": 17,
+          "end_line": 66
+        }
+      ],
+      "pos": [
+        420,
+        580
+      ],
+      "size": [
+        240,
+        90
+      ]
+    },
+    {
+      "id": "load",
+      "type": "database",
+      "label": "5. Load sources",
+      "sublabel": "Skip when mode is none",
+      "tag": "Scoped DataSources",
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 193,
+          "end_line": 200
+        },
+        {
+          "path": "main.py",
+          "line": 26,
+          "end_line": 85
+        }
+      ],
+      "pos": [
+        420,
+        760
+      ],
+      "size": [
+        240,
+        90
+      ]
+    },
+    {
+      "id": "execute",
+      "type": "backend",
+      "label": "6. Execute",
+      "sublabel": "Skip when mode is none",
+      "tag": "ExecutionResult",
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 203,
+          "end_line": 220
+        },
+        {
+          "path": "execution.py",
+          "line": 159,
+          "end_line": 284
+        },
+        {
+          "path": "execution.py",
+          "line": 103,
+          "end_line": 138
+        }
+      ],
+      "pos": [
+        420,
+        940
+      ],
+      "size": [
+        240,
+        90
+      ]
+    },
+    {
+      "id": "summarize",
+      "type": "backend",
+      "label": "7. Summarize",
+      "sublabel": "Validate domain answer",
+      "tag": "Answer + questions",
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 223,
+          "end_line": 232
+        },
+        {
+          "path": "summarization.py",
+          "line": 38,
+          "end_line": 84
+        }
+      ],
+      "pos": [
+        420,
+        1120
+      ],
+      "size": [
+        240,
+        90
+      ]
+    },
+    {
+      "id": "answer",
+      "type": "external",
+      "label": "Answer returned",
+      "sublabel": "Or clarification passthrough",
+      "tag": "Complete",
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 223,
+          "end_line": 232
+        },
+        {
+          "path": "summarization.py",
+          "line": 87,
+          "end_line": 89
+        }
+      ],
+      "pos": [
+        420,
+        1300
+      ],
+      "size": [
+        240,
+        90
+      ]
+    },
+    {
+      "id": "failure",
+      "type": "security",
+      "label": "Failure surfaced",
+      "sublabel": "Timeout / error / cancellation",
+      "tag": "Chain stops",
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 83,
+          "end_line": 130
+        },
+        {
+          "path": "agent.py",
+          "line": 56,
+          "end_line": 96
+        }
+      ],
+      "pos": [
+        800,
+        940
+      ],
+      "size": [
+        240,
+        90
+      ]
+    },
+    {
+      "id": "preview-classify",
+      "type": "external",
+      "label": "Intent preview",
+      "sublabel": "Return before data access",
+      "tag": "Early completion",
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 148,
+          "end_line": 158
+        },
+        {
+          "path": "pipeline.py",
+          "line": 161,
+          "end_line": 173
+        },
+        {
+          "path": "pipeline.py",
+          "line": 176,
+          "end_line": 190
+        }
+      ],
+      "pos": [
+        60,
+        220
+      ],
+      "size": [
+        240,
+        90
+      ]
+    },
+    {
+      "id": "preview-plan",
+      "type": "external",
+      "label": "Plan API preview",
+      "sublabel": "Return before data access",
+      "tag": "Early completion",
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 148,
+          "end_line": 158
+        },
+        {
+          "path": "pipeline.py",
+          "line": 161,
+          "end_line": 173
+        },
+        {
+          "path": "pipeline.py",
+          "line": 176,
+          "end_line": 190
+        }
+      ],
+      "pos": [
+        60,
+        400
+      ],
+      "size": [
+        240,
+        90
+      ]
+    },
+    {
+      "id": "preview-publish",
+      "type": "external",
+      "label": "Published preview",
+      "sublabel": "Return before data access",
+      "tag": "Early completion",
+      "sources": [
+        {
+          "path": "pipeline.py",
+          "line": 148,
+          "end_line": 158
+        },
+        {
+          "path": "pipeline.py",
+          "line": 161,
+          "end_line": 173
+        },
+        {
+          "path": "pipeline.py",
+          "line": 176,
+          "end_line": 190
+        }
+      ],
+      "pos": [
+        60,
+        580
+      ],
+      "size": [
+        240,
+        90
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "resolve-classify",
+      "from": "resolve",
+      "to": "classify",
+      "variant": "emphasis"
+    },
+    {
+      "id": "classify-plan",
+      "from": "classify",
+      "to": "plan",
+      "variant": "emphasis"
+    },
+    {
+      "id": "plan-publish",
+      "from": "plan",
+      "to": "publish",
+      "variant": "emphasis"
+    },
+    {
+      "id": "publish-load",
+      "from": "publish",
+      "to": "load",
+      "variant": "emphasis"
+    },
+    {
+      "id": "load-execute",
+      "from": "load",
+      "to": "execute",
+      "variant": "emphasis"
+    },
+    {
+      "id": "execute-summarize",
+      "from": "execute",
+      "to": "summarize",
+      "variant": "emphasis"
+    },
+    {
+      "id": "summarize-answer",
+      "from": "summarize",
+      "to": "answer",
+      "variant": "emphasis"
+    },
+    {
+      "id": "classify-preview",
+      "from": "classify",
+      "to": "preview-classify",
+      "label": "classify mode",
+      "variant": "dashed"
+    },
+    {
+      "id": "plan-preview",
+      "from": "plan",
+      "to": "preview-plan",
+      "label": "plan API mode",
+      "variant": "dashed"
+    },
+    {
+      "id": "publish-preview",
+      "from": "publish",
+      "to": "preview-publish",
+      "label": "publish_plan mode",
+      "variant": "dashed"
+    },
+    {
+      "id": "execute-failure",
+      "from": "execute",
+      "to": "failure",
+      "label": "Retries exhausted",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Resolve: ownership and model",
+      "items": [
+        "Input: question, tenant ID, workspace ID and optional token override.",
+        "Validate workspace ownership and domain profile before model/data access.",
+        "Output: RequestScope and tenant-selected model; no domain inference or queries."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Classify: what the user needs",
+      "items": [
+        "Input: question and trusted workspace description/glossary.",
+        "Split ready and ambiguous objectives; classify business intent only.",
+        "Output: QuestionIntent; do not choose sources or tools. Classify mode returns here."
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Plan: how to serve the intent",
+      "items": [
+        "Input: intent, source catalog and scoped domain guidance.",
+        "Choose SQL or SQL + Python; preserve deferred questions and validation checks.",
+        "Consolidate adjacent Python steps; output a scope-validated ExecutionPlan. Plan API mode stops here."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Publish: make execution reviewable",
+      "items": [
+        "Input: question, intent and validated plan.",
+        "Write owner-only plan JSON under artifacts/plans/tenant-*/workspace-* and print the approach.",
+        "Output: artifact path. Publication failure prevents source loading; CLI --plan-only stops here."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Load: prepare authorized sources",
+      "items": [
+        "Input: resolved scope and selected source IDs. Skip loading for a no-execution plan.",
+        "Register scoped Parquet directly; load PostgreSQL via Psycopg/Arrow in a read-only consistent snapshot.",
+        "Output: DataSources backed by host DataFusion. No SQL or database runs inside Monty."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Execute: complete planned work",
+      "items": [
+        "Input: question, plan, scoped sources and mapped model.",
+        "Enforce schema -> SQL -> optional Python step order; failures leave steps pending for correction.",
+        "SQL stays read-only and scoped; Python receives complete, untruncated typed rows only.",
+        "Prepare code: validate names and input use, supply missing Decimal import, normalize final print.",
+        "Reuse matching successful calculations; otherwise run Monty with zero external suspensions.",
+        "Output: SQL rows/queries, non-null Python values and completed step IDs. No-execution plans skip tools."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Summarize: explain verified evidence",
+      "items": [
+        "Input: question, plan, actual execution evidence and scoped vocabulary/tone.",
+        "Hybrid results must contain non-null Python outputs; summary has no tools.",
+        "Validate numeric/date claims, configured safe sums, topic scope and policy claims; request corrections on failure.",
+        "Output: concise business answer; append deferred clarification questions once. Without execution, return the plan response without a model call."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Lifecycle and failure rules",
+      "items": [
+        "These are pipeline stages, not a persisted agent state machine. A request-local context carries their outputs.",
+        "Every visited stage emits start/end logs, status and elapsed time, including failures and cancellation.",
+        "Any unrecovered stage error stops successor execution; the illustrated failure branch shows executor retry exhaustion.",
+        "Preview exits return before source loading. Model budgets apply per request; --max-tokens overrides are reset on exit."
+      ]
+    }
+  ]
+}
