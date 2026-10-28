@@ -518,6 +518,8 @@ intent = asyncio.run(classify_question("Which AMC has the largest holdings?", te
 intent, plan = asyncio.run(plan_question("Which AMC has the largest holdings?", tenant_id="2", workspace_id="2"))
 ```
 
+Before sandbox execution, Python preparation checks unresolved global names, including names used inside lambdas, comprehensions and helper functions. A missing `Decimal` import is supplied from the sandbox-native `decimal` module. Other undefined names cause a correction request naming the missing identifiers. Replacing the host-provided `data` with copied literal rows is rejected; deriving a local view from the supplied input remains supported. Each snippet must define its helpers and import supported modules; sandbox suspensions and external host callbacks remain disabled.
+
 Python calculation results must be structured, non-null values read from stored SQL inputs. A final `print(result)` is normalized to return `result`. Copied input rows are rejected when code does not read `data`; a null result leaves the calculation step pending for correction. Summarization requires the completed Python results, preventing printed-only output from triggering unsupported-number retries.
 
 Adjacent Python plan steps are consolidated before publication, preserving their requested outputs in one calculation. Related statistics should reuse intermediate values. Within one request, identical normalized Python code on identical stored SQL inputs reuses its successful result; `PYTHON REUSED` records identify the original step without repeating the code or invoking Monty. Separate requests have separate caches. Failed calculations remain retryable.

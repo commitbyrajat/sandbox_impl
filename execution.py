@@ -1,6 +1,8 @@
 """Execute planned SQL in DataFusion and optional calculations in Monty."""
 
 import ast
+import builtins
+import symtable
 import hashlib
 import asyncio
 from contextlib import AsyncExitStack
@@ -57,6 +59,9 @@ print(result) or an assignment. Its final Python expression is returned. Each in
 no pandas, pyarrow, network, filesystem, SQL callbacks or previous Python state.
 Use exact column aliases returned by run_sql, not guessed names from the plan.
 Use decimal.Decimal for exact decimal calculations; never mix Decimal and float.
+Each fresh snippet must import its modules: use from decimal import Decimal.
+SQL numeric values are already Decimal; do not convert them to floats.
+Undefined names cannot be resolved through external callbacks.
 The sandbox supports random.seed and random.choice, Decimal, lists, loops and
 sorted; scientific packages such as numpy/scipy are unavailable. Prefer these
 simple primitives for iterative algorithms. Return method parameters alongside
@@ -76,6 +81,25 @@ queries using tool feedback; never switch to an unselected source.
 """
 
 
+def undefined_python_names(code: str) -> set[str]:
+    """Find unresolved globals, including references inside lambdas/functions."""
+    try:
+        table = symtable.symtable(code, '<monty>', 'exec')
+    except SyntaxError as exc:
+        raise ValueError(f'Invalid Python scope: {exc.msg}') from exc
+    defined = {symbol.get_name() for symbol in table.get_symbols()
+               if symbol.is_assigned() or symbol.is_imported() or symbol.is_namespace()}
+    available = defined | set(vars(builtins)) | {'data'}
+    def unresolved(scope):
+        names = {symbol.get_name() for symbol in scope.get_symbols()
+                 if symbol.is_referenced() and symbol.is_global()
+                 and symbol.get_name() not in available}
+        for child in scope.get_children():
+            names.update(unresolved(child))
+        return names
+    return unresolved(table)
+
+
 def prepare_python(code: str) -> str:
     """Require SQL-backed input and retain the value of a final print expression."""
     try:
@@ -85,6 +109,26 @@ def prepare_python(code: str) -> str:
     if not any(isinstance(node, ast.Name) and node.id == 'data' and isinstance(node.ctx, ast.Load)
                for node in ast.walk(tree)):
         raise ValueError("Read SQL rows from data[result_id]; do not copy rows or amounts into code")
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            assigns_data = any(isinstance(name, ast.Name) and name.id == 'data'
+                               for target in targets for name in ast.walk(target))
+            reads_input = node.value is not None and any(
+                isinstance(name, ast.Name) and name.id == 'data' and isinstance(name.ctx, ast.Load)
+                for name in ast.walk(node.value))
+            if assigns_data and not reads_input:
+                raise ValueError('data is supplied by the host. Do not replace it with copied rows; read data[result_id] directly.')
+    # Decimal is a sandbox-native library, never an external host callback.
+    # Every checkout is fresh; add its import when the model omitted it.
+    if 'Decimal' in undefined_python_names(code):
+        tree.body.insert(0, ast.ImportFrom(module='decimal', names=[ast.alias(name='Decimal')], level=0))
+        code = ast.unparse(ast.fix_missing_locations(tree))
+    missing = undefined_python_names(code)
+    if missing:
+        raise ValueError('Undefined sandbox names: ' + ', '.join(sorted(missing))
+                         + '. Import supported modules and define variables in this snippet. '
+                         + 'Read rows from data[result_id]; no state persists between Python steps.')
     if tree.body and isinstance(tree.body[-1], ast.Expr):
         call = tree.body[-1].value
         if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
@@ -231,7 +275,12 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                 return payload
             except (MontyError, ValueError, RuntimeError) as exc:
                 trace(f'TOOL run_python: {step_id} failed: {str(exc)[:1000]}')
-                raise ModelRetry(f'Python execution failed: {str(exc)[:2000]}') from exc
+                feedback = str(exc)[:2000]
+                if 'suspend' in feedback or 'suspension' in feedback:
+                    feedback += (' The sandbox cannot resolve external functions or missing globals. '
+                                 'Import modules and define all helper functions in this snippet; '
+                                 'read SQL inputs from data[result_id].')
+                raise ModelRetry(f'Python execution failed: {feedback}') from exc
     return agent
 
 
