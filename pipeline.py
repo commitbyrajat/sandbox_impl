@@ -20,7 +20,7 @@ from model_config import configured_model
 from plan_publication import publish_plan
 from planning import ExecutionPlan, QuestionIntent, build_plan, classify_intent
 from summarization import append_clarifications, summarize_result
-from runtime import TRACE_ENABLED, PipelineModelTimeout, trace
+from runtime import MAX_TOKENS_OVERRIDE, TRACE_ENABLED, PipelineModelTimeout, trace
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,7 @@ class PipelineRequest:
     mode: Literal['answer', 'classify', 'plan', 'publish_plan'] = 'answer'
     trace: bool = False
     plan_dir: Path | None = None
+    max_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -215,7 +216,8 @@ class ExecuteStage(PipelineStage):
             for query in context.execution.queries:
                 print('SQL: ' + query, file=sys.stderr)
             for run in context.execution.python_runs:
-                print('PYTHON: ' + json.dumps(run, default=str), file=sys.stderr)
+                label = 'PYTHON REUSED: ' if run.get('executed') is False else 'PYTHON: '
+                print(label + json.dumps(run, default=str), file=sys.stderr)
 
 
 class SummarizeStage(PipelineStage):
@@ -245,4 +247,11 @@ class Pipeline:
         self.stages[-1].next_stage = None
 
     async def run(self, request: PipelineRequest, models: PipelineModels | None = None) -> PipelineContext:
-        return await self.stages[0].handle(PipelineContext(request, models or PipelineModels()))
+        if request.max_tokens is not None and (isinstance(request.max_tokens, bool)
+                or not isinstance(request.max_tokens, int) or request.max_tokens < 1):
+            raise ValueError('max_tokens must be a positive integer')
+        token = MAX_TOKENS_OVERRIDE.set(request.max_tokens)
+        try:
+            return await self.stages[0].handle(PipelineContext(request, models or PipelineModels()))
+        finally:
+            MAX_TOKENS_OVERRIDE.reset(token)

@@ -1,6 +1,7 @@
 """Execute planned SQL in DataFusion and optional calculations in Monty."""
 
 import ast
+import hashlib
 import asyncio
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -97,6 +98,7 @@ def prepare_python(code: str) -> str:
 class Dependencies:
     sources: DataSources
     pool: AsyncMonty | None = None
+    python_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
     python_runs: list[dict[str, Any]] = field(default_factory=list)
     completed_steps: list[str] = field(default_factory=list)
 
@@ -195,6 +197,16 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
             try:
                 code = prepare_python(code)
                 inputs = ctx.deps.sources.python_inputs(result_ids)
+                fingerprint = hashlib.sha256((ast.dump(ast.parse(code), include_attributes=False)
+                                              + '\0' + repr(inputs)).encode()).hexdigest()
+                cached = ctx.deps.python_cache.get(fingerprint)
+                if cached is not None:
+                    ctx.deps.python_runs.append({'step_id': step_id, 'result_ids': result_ids,
+                        'output': cached['output'], 'executed': False,
+                        'reused_from_step_id': cached['step_id']})
+                    ctx.deps.completed_steps.append(step_id)
+                    trace(f'TOOL run_python: {step_id} reused result from {cached["step_id"]}; sandbox not invoked')
+                    return json.dumps({'result': cached['output'], 'reused_from_step_id': cached['step_id']}, default=str)
                 if ctx.deps.pool is None:
                     raise ValueError('Python sandbox is unavailable')
                 async with ctx.deps.pool.checkout(limits={
@@ -202,6 +214,7 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                     'max_suspensions': 0,
                 }) as session:
                     printed = CollectString(max_bytes=8_000)
+                    trace(f'TOOL run_python: {step_id} sandbox execution started')
                     result = await session.feed_run(
                         code, inputs={'data': inputs}, print_callback=printed,
                     )
@@ -210,7 +223,9 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                 payload = json.dumps({'result': result, 'stdout': printed.output}, default=str)
                 if len(payload) > 24_000:
                     raise ValueError('Python result too large; return a summary')
-                ctx.deps.python_runs.append({'step_id': step_id, 'code': code, 'result_ids': result_ids, 'output': result})
+                record = {'step_id': step_id, 'code': code, 'result_ids': result_ids, 'output': result, 'executed': True}
+                ctx.deps.python_runs.append(record)
+                ctx.deps.python_cache[fingerprint] = record
                 ctx.deps.completed_steps.append(step_id)
                 trace(f'TOOL run_python: {step_id} completed')
                 return payload

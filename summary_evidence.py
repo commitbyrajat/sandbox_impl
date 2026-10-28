@@ -53,6 +53,7 @@ class SummaryEvidence:
                 with localcontext() as context:
                     context.prec = 76
                     self.numbers.add(number.quantize(Decimal('0.01')))
+                    self.numbers.add(number.quantize(Decimal('1')))
             except InvalidOperation:
                 pass
         elif isinstance(value, dict):

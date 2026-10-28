@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from main import ROOT
 
 TRACE_ENABLED: ContextVar[bool] = ContextVar('pipeline_trace_enabled', default=False)
+MAX_TOKENS_OVERRIDE: ContextVar[int | None] = ContextVar('pipeline_max_tokens', default=None)
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ def model_budget() -> ModelBudget:
         raise ValueError('LITELLM_MAX_RETRIES and LITELLM_MAX_OUTPUT_TOKENS must be integers') from None
     if retries < 0 or tokens < 1:
         raise ValueError('LITELLM_MAX_RETRIES must be nonnegative and LITELLM_MAX_OUTPUT_TOKENS positive')
-    return ModelBudget(timeout, deadline, retries, tokens)
+    return ModelBudget(timeout, deadline, retries, MAX_TOKENS_OVERRIDE.get() or tokens)
 
 
 def model_settings() -> dict:

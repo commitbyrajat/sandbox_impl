@@ -115,6 +115,22 @@ class ExecutionPlan(BaseModel):
         return self
 
 
+def consolidate_python_steps(plan: ExecutionPlan) -> ExecutionPlan:
+    """Batch adjacent calculations while preserving every requested output."""
+    steps = []
+    for step in plan.steps:
+        if step.action == 'python' and steps and steps[-1].action == 'python':
+            previous = steps[-1]
+            steps[-1] = previous.model_copy(update={
+                'instruction': previous.instruction + '\nAlso: ' + step.instruction
+                    + '\nReturn all requested calculations together in one structured result; reuse intermediate values.',
+                'expected_output': previous.expected_output + '\n' + step.expected_output,
+            })
+        else:
+            steps.append(step)
+    return ExecutionPlan.model_validate({**plan.model_dump(), 'steps': steps})
+
+
 CLASSIFIER_INSTRUCTIONS = """
 Identify only WHAT the user asks to accomplish. Return intent, a short objective,
 explicit constraints (filters, dates, groupings, output units, requested algorithms)
@@ -178,6 +194,10 @@ explain why querying the data is sufficient or why a separate calculation is
 needed. For sql_python, python_reason must name the calculation, its inputs and
 why SQL alone is insufficient. Publish the choice before execution, including
 the Python step when needed. The planner owns this decision, not the user.
+Batch related Python calculations on the same SQL inputs into one step and one
+structured result. Reuse intermediate calculations; do not create separate steps
+for a statistic already calculated by the main algorithm. Avoid redundant SQL
+materializations: use a CTE/subquery inside the final retrieval where possible.
 Use one schema step, at least one SQL step, at most 12 steps. Each step is completed
 by one successful tool call, so split multiple queries into distinct SQL steps.
 List concise validation_checks for the requested results, including completeness,
@@ -251,7 +271,7 @@ async def build_plan(
         for item in deferred:
             pending[item.objective.strip().casefold()] = item
         plan.deferred_objectives = list(pending.values())
-        return plan
+        return consolidate_python_steps(plan)
 
     prompt = json.dumps({'question': question, 'classified_intent': intent.model_dump()})
     return (await agent.run(prompt, usage_limits=UsageLimits(request_limit=4))).output

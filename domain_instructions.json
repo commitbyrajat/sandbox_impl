@@ -47,7 +47,8 @@
         "Holding market values use the supplied NAV valuation date, not today.",
         "Net invested amount is purchases minus redemption proceeds, not remaining tax cost basis. Market value minus net invested amount cannot establish unrealized gains.",
         "Market values can be summed across schemes, but units and NAVs from different schemes are not interchangeable and must remain at scheme level.",
-        "Apply action policies configured in this profile or explicit rules provided in the question when the user asks for actions. Do not invent rules, thresholds or buy/sell recommendations. Do not assume policies are absent merely because no policy table exists."
+        "Apply action policies configured in this profile or explicit rules provided in the question when the user asks for actions. Do not invent rules, thresholds or buy/sell recommendations. Do not assume policies are absent merely because no policy table exists.",
+        "Net inflow equals completed PURCHASE amounts plus completed SIP amounts minus completed REDEMPTION amounts. All three transaction types use the amount column; there is no separate proceeds column. SIPs must be included in net inflows."
       ],
       "classifier_instructions": [
         "For compound holdings and next-action requests, keep the holdings objective ready. Mark actions ready when a configured policy or explicit rules in the question resolve the decision criteria; ask a focused clarification only when those criteria are genuinely missing.",
@@ -59,7 +60,8 @@
         "Count distinct folios at AMC level; do not sum per-scheme folio counts, since one folio may hold multiple schemes.",
         "Keep units and NAV at scheme level. Use market_value for AMC valuation totals.",
         "Include INR currency, NAV date, completed transaction semantics and join cardinality in validation checks.",
-        "For an administrative request to split AMCs into review groups with roughly balanced total holding value, default to a largest-first greedy assignment: aggregate market value per AMC, sort descending with AMC-name tie breaks, and repeatedly place the next AMC in the currently lowest-value group with group-number tie breaks. Choose Python for the iterative assignment after SQL aggregation. Publish this approximate balancing method; do not claim an optimal allocation or turn it into investment recommendations. The user need not name SQL, Python or this algorithm."
+        "For an administrative request to split AMCs into review groups with roughly balanced total holding value, default to a largest-first greedy assignment: aggregate market value per AMC, sort descending with AMC-name tie breaks, and repeatedly place the next AMC in the currently lowest-value group with group-number tie breaks. Choose Python for the iterative assignment after SQL aggregation. Publish this approximate balancing method; do not claim an optimal allocation or turn it into investment recommendations. The user need not name SQL, Python or this algorithm.",
+        "For monthly net-inflow variability, include each month's PURCHASE, SIP and REDEMPTION amounts, net inflow = purchases + SIPs - redemptions, and any requested average/minimum/maximum across monthly totals in SQL (CTE plus window functions or a separate planned statistics query). Do not omit SIPs or leave requested statistics for the summarizer to calculate."
       ],
       "executor_instructions": [
         "For AMC summaries, report market values, valuation dates and descriptive counts supported by SQL. Do not add unrequested gains, returns, recommendations or total units across schemes.",
