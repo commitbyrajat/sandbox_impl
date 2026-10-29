@@ -7,29 +7,33 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_ai import Agent, ModelRetry, UsageLimits
 from pydantic_ai.models import Model
-from runtime import model_settings
 
-from datasource_mapping import SourceId, TenantId, WorkspaceId, get_workspace, routing_catalog
-from domain_instructions import domain_context
+from datasource_mapping import (SourceId, TenantId, WorkspaceId, get_workspace,
+                                routing_catalog)
+from domain_instructions import domain_context, get_domain_profile
+from query_recipes import SqlRecipeCall, match_sql_recipe
+from runtime import model_settings
 
 
 class Objective(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     objective: str = Field(min_length=1)
-    status: Literal['ready', 'needs_clarification']
+    status: Literal["ready", "needs_clarification"]
     clarification: str | None = None
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def validate_status(self):
-        if self.status == 'needs_clarification' and not self.clarification:
-            raise ValueError('Deferred objectives need a specific clarification question')
-        if self.status == 'ready' and self.clarification:
-            raise ValueError('Ready objectives cannot require clarification')
+        if self.status == "needs_clarification" and not self.clarification:
+            raise ValueError(
+                "Deferred objectives need a specific clarification question"
+            )
+        if self.status == "ready" and self.clarification:
+            raise ValueError("Ready objectives cannot require clarification")
         return self
 
 
 class DeferredObjective(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     objective: str = Field(min_length=1)
     clarification: str = Field(min_length=1)
 
@@ -37,29 +41,37 @@ class DeferredObjective(BaseModel):
 class QuestionIntent(BaseModel):
     """What the user wants; deliberately contains no routing or execution choices."""
 
-    model_config = ConfigDict(extra='forbid')
-    intent: Literal['lookup', 'aggregation', 'comparison', 'advanced_analysis', 'clarification']
+    model_config = ConfigDict(extra="forbid")
+    intent: Literal[
+        "lookup", "aggregation", "comparison", "advanced_analysis", "clarification"
+    ]
     objective: str = Field(min_length=1)
     constraints: list[str] = Field(default_factory=list)
     clarification: str | None = None
     objectives: list[Objective] = Field(default_factory=list)
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def check_clarification(self):
-        if self.intent == 'clarification' and any(o.status == 'ready' for o in self.objectives):
-            raise ValueError('Do not block ready objectives; use their intent and defer only unclear parts')
-        if self.objectives and all(o.status == 'needs_clarification' for o in self.objectives):
-            if self.intent != 'clarification':
-                raise ValueError('A wholly unclear request requires clarification')
-        if self.intent == 'clarification' and not self.clarification:
-            raise ValueError('Provide a clarification question when intent is unclear')
+        if self.intent == "clarification" and any(
+            o.status == "ready" for o in self.objectives
+        ):
+            raise ValueError(
+                "Do not block ready objectives; use their intent and defer only unclear parts"
+            )
+        if self.objectives and all(
+            o.status == "needs_clarification" for o in self.objectives
+        ):
+            if self.intent != "clarification":
+                raise ValueError("A wholly unclear request requires clarification")
+        if self.intent == "clarification" and not self.clarification:
+            raise ValueError("Provide a clarification question when intent is unclear")
         return self
 
 
 class ExecutionStep(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     step_id: str = Field(min_length=1)
-    action: Literal['schema', 'sql', 'python']
+    action: Literal["schema", "sql", "python"]
     instruction: str = Field(min_length=1)
     expected_output: str = Field(min_length=1)
 
@@ -67,51 +79,75 @@ class ExecutionStep(BaseModel):
 class ExecutionPlan(BaseModel):
     """A concise operational plan, rather than a transcript of model deliberation."""
 
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     tenant_id: TenantId
     workspace_id: WorkspaceId
     sources: list[SourceId]
-    execution_mode: Literal['sql', 'sql_python', 'none']
+    execution_mode: Literal["sql", "sql_python", "none"]
     execution_reason: str | None = None
+    sql_recipe: SqlRecipeCall | None = None
     steps: list[ExecutionStep] = Field(max_length=12)
     validation_checks: list[str]
     python_reason: str | None = None
     response: str | None = None
     deferred_objectives: list[DeferredObjective] = Field(default_factory=list)
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def validate_plan(self):
+        if self.sql_recipe is not None and (
+            self.execution_mode != "sql"
+            or [step.action for step in self.steps] != ["schema", "sql"]
+        ):
+            raise ValueError(
+                "Configured SQL recipes require one schema step and one SQL step"
+            )
         _, workspace = get_workspace(self.workspace_id, tenant_id=self.tenant_id)
         if set(self.sources) - workspace.sources.keys():
-            raise ValueError('Selected sources must belong to the specified workspace')
+            raise ValueError("Selected sources must belong to the specified workspace")
         if len(self.sources) != len(set(self.sources)):
-            raise ValueError('Source IDs must be unique')
-        if self.execution_mode != 'sql_python' and self.python_reason:
-            raise ValueError('A Python purpose belongs only to a plan that requires Python')
-        if self.execution_mode == 'none':
+            raise ValueError("Source IDs must be unique")
+        if self.execution_mode != "sql_python" and self.python_reason:
+            raise ValueError(
+                "A Python purpose belongs only to a plan that requires Python"
+            )
+        if self.execution_mode == "none":
             if self.sources or self.steps or not self.response:
-                raise ValueError('No-execution plans need a response and no sources or steps')
+                raise ValueError(
+                    "No-execution plans need a response and no sources or steps"
+                )
             return self
         if self.response is not None:
-            raise ValueError('Executable plans must answer from results, not a prewritten response')
+            raise ValueError(
+                "Executable plans must answer from results, not a prewritten response"
+            )
         if not self.execution_reason or not self.execution_reason.strip():
-            raise ValueError('Explain why the selected execution approach serves the business objective')
+            raise ValueError(
+                "Explain why the selected execution approach serves the business objective"
+            )
         if not self.sources or not self.steps or not self.validation_checks:
-            raise ValueError('Executable plans need sources, steps and validation checks')
+            raise ValueError(
+                "Executable plans need sources, steps and validation checks"
+            )
         ids = [step.step_id for step in self.steps]
         actions = [step.action for step in self.steps]
         if len(ids) != len(set(ids)):
-            raise ValueError('Step IDs must be unique')
-        if actions[0] != 'schema' or actions.count('schema') != 1 or 'sql' not in actions:
-            raise ValueError('Inspect schema first, then obtain SQL evidence')
-        if 'python' in actions and actions.index('python') < actions.index('sql'):
-            raise ValueError('SQL must retrieve data before Python runs')
-        if self.execution_mode == 'sql' and 'python' in actions:
-            raise ValueError('SQL-only plans cannot include Python steps')
-        if self.execution_mode == 'sql_python' and (
-            'python' not in actions or not self.python_reason or not self.python_reason.strip()
+            raise ValueError("Step IDs must be unique")
+        if (
+            actions[0] != "schema"
+            or actions.count("schema") != 1
+            or "sql" not in actions
         ):
-            raise ValueError('Hybrid plans need a Python step and its non-SQL purpose')
+            raise ValueError("Inspect schema first, then obtain SQL evidence")
+        if "python" in actions and actions.index("python") < actions.index("sql"):
+            raise ValueError("SQL must retrieve data before Python runs")
+        if self.execution_mode == "sql" and "python" in actions:
+            raise ValueError("SQL-only plans cannot include Python steps")
+        if self.execution_mode == "sql_python" and (
+            "python" not in actions
+            or not self.python_reason
+            or not self.python_reason.strip()
+        ):
+            raise ValueError("Hybrid plans need a Python step and its non-SQL purpose")
         return self
 
 
@@ -119,16 +155,22 @@ def consolidate_python_steps(plan: ExecutionPlan) -> ExecutionPlan:
     """Batch adjacent calculations while preserving every requested output."""
     steps = []
     for step in plan.steps:
-        if step.action == 'python' and steps and steps[-1].action == 'python':
+        if step.action == "python" and steps and steps[-1].action == "python":
             previous = steps[-1]
-            steps[-1] = previous.model_copy(update={
-                'instruction': previous.instruction + '\nAlso: ' + step.instruction
-                    + '\nReturn all requested calculations together in one structured result; reuse intermediate values.',
-                'expected_output': previous.expected_output + '\n' + step.expected_output,
-            })
+            steps[-1] = previous.model_copy(
+                update={
+                    "instruction": previous.instruction
+                    + "\nAlso: "
+                    + step.instruction
+                    + "\nReturn all requested calculations together in one structured result; reuse intermediate values.",
+                    "expected_output": previous.expected_output
+                    + "\n"
+                    + step.expected_output,
+                }
+            )
         else:
             steps.append(step)
-    return ExecutionPlan.model_validate({**plan.model_dump(), 'steps': steps})
+    return ExecutionPlan.model_validate({**plan.model_dump(), "steps": steps})
 
 
 CLASSIFIER_INSTRUCTIONS = """
@@ -215,63 +257,156 @@ that the available data does not support.
 """
 
 
-async def classify_intent(question: str, *, model: Model, workspace_context: str) -> QuestionIntent:
-    agent = Agent(model, output_type=QuestionIntent,
-                  instructions=CLASSIFIER_INSTRUCTIONS + '\nTrusted workspace context:\n' + workspace_context,
-                  retries=3, model_settings=model_settings())
+async def classify_intent(
+    question: str, *, model: Model, workspace_context: str
+) -> QuestionIntent:
+    agent = Agent(
+        model,
+        output_type=QuestionIntent,
+        instructions=CLASSIFIER_INSTRUCTIONS
+        + "\nTrusted workspace context:\n"
+        + workspace_context,
+        retries=3,
+        model_settings=model_settings(),
+    )
 
     @agent.output_validator
     def clarify_only_missing_intent(intent: QuestionIntent) -> QuestionIntent:
-        questions = [intent.clarification or ''] + [o.clarification or '' for o in intent.objectives]
-        glossary = json.loads(workspace_context).get('glossary', {})
+        questions = [intent.clarification or ""] + [
+            o.clarification or "" for o in intent.objectives
+        ]
+        glossary = json.loads(workspace_context).get("glossary", {})
         for text in questions:
-            if re.search(r'\b(?:sql\s*(?:or|/|versus|vs\.?)\s*python|'
-                         r'python\s*(?:or|/|versus|vs\.?)\s*sql)\b', text, re.IGNORECASE):
-                raise ModelRetry('The planner chooses SQL/Python; clarify only missing business requirements')
-            if re.search(r'\b(?:which|what)\s+(?:(?:tenant|workspace|dataset)(?:\s+id)?|data\s+source)\b',
-                         text, re.IGNORECASE):
-                raise ModelRetry('Tenant, workspace and dataset are already fixed; clarify only missing task intent')
+            if re.search(
+                r"\b(?:sql\s*(?:or|/|versus|vs\.?)\s*python|"
+                r"python\s*(?:or|/|versus|vs\.?)\s*sql)\b",
+                text,
+                re.IGNORECASE,
+            ):
+                raise ModelRetry(
+                    "The planner chooses SQL/Python; clarify only missing business requirements"
+                )
+            if re.search(
+                r"\b(?:which|what)\s+(?:(?:tenant|workspace|dataset)(?:\s+id)?|data\s+source)\b",
+                text,
+                re.IGNORECASE,
+            ):
+                raise ModelRetry(
+                    "Tenant, workspace and dataset are already fixed; clarify only missing task intent"
+                )
             for term, definition in glossary.items():
-                quoted_term = r'''["'“”‘’]?''' + re.escape(term) + r'''["'“”‘’]?'''
-                if re.search(r'\bwhat\s+(?:does\s+' + quoted_term
-                             + r'\s+(?:mean|refer|stand)|is\s+(?:an?\s+)?'
-                             + quoted_term + r'(?=\W|$))', text, re.IGNORECASE):
-                    raise ModelRetry(f'The workspace glossary already defines {term}: {definition}')
+                quoted_term = r"""["'“”‘’]?""" + re.escape(term) + r"""["'“”‘’]?"""
+                if re.search(
+                    r"\bwhat\s+(?:does\s+"
+                    + quoted_term
+                    + r"\s+(?:mean|refer|stand)|is\s+(?:an?\s+)?"
+                    + quoted_term
+                    + r"(?=\W|$))",
+                    text,
+                    re.IGNORECASE,
+                ):
+                    raise ModelRetry(
+                        f"The workspace glossary already defines {term}: {definition}"
+                    )
         return intent
 
     return (await agent.run(question, usage_limits=UsageLimits(request_limit=4))).output
 
 
 async def build_plan(
-    question: str, intent: QuestionIntent, *, tenant_id: str | int, workspace_id: str | int, model: Model,
+    question: str,
+    intent: QuestionIntent,
+    *,
+    tenant_id: str | int,
+    workspace_id: str | int,
+    model: Model,
 ) -> ExecutionPlan:
     key, _ = get_workspace(workspace_id, tenant_id=tenant_id)
     tenant_key = str(tenant_id)
-    deferred = [DeferredObjective(objective=o.objective, clarification=o.clarification)
-                for o in intent.objectives if o.status == 'needs_clarification']
-    if intent.intent == 'clarification':
-        return ExecutionPlan(tenant_id=tenant_key, workspace_id=key, sources=[], execution_mode='none',
-                             steps=[], validation_checks=[], response=intent.clarification,
-                             deferred_objectives=deferred)
+    deferred = [
+        DeferredObjective(objective=o.objective, clarification=o.clarification)
+        for o in intent.objectives
+        if o.status == "needs_clarification"
+    ]
+    if intent.intent == "clarification":
+        return ExecutionPlan(
+            tenant_id=tenant_key,
+            workspace_id=key,
+            sources=[],
+            execution_mode="none",
+            steps=[],
+            validation_checks=[],
+            response=intent.clarification,
+            deferred_objectives=deferred,
+        )
+    if not deferred:
+        profile = get_domain_profile(key, tenant_id=tenant_key)
+        recipe = match_sql_recipe(question, profile.sql_recipes)
+        if recipe is not None:
+            spec = profile.sql_recipes[recipe.recipe_id]
+            return ExecutionPlan(
+                tenant_id=tenant_key,
+                workspace_id=key,
+                sources=spec.sources,
+                execution_mode="sql",
+                execution_reason=spec.reason,
+                sql_recipe=recipe,
+                steps=[
+                    ExecutionStep(
+                        step_id="schema",
+                        action="schema",
+                        instruction="Inspect the scoped source schemas required by the configured query.",
+                        expected_output="Registered column names and types",
+                    ),
+                    ExecutionStep(
+                        step_id="sql",
+                        action="sql",
+                        instruction="Execute configured SQL recipe "
+                        + recipe.recipe_id
+                        + " using published numeric parameters, without rewriting its formulas.",
+                        expected_output=spec.expected_output,
+                    ),
+                ],
+                validation_checks=spec.validation_checks,
+            )
     agent = Agent(
-        model, output_type=ExecutionPlan,
-        instructions=(PLANNER_INSTRUCTIONS + '\nWorkspace domain guidance:\n'
-                      + domain_context(key, tenant_id=tenant_key, stage='planner')
-                      + '\nWorkspace catalog:\n' + routing_catalog(key, tenant_id=tenant_key)),
-        retries=3, model_settings=model_settings(),
+        model,
+        output_type=ExecutionPlan,
+        instructions=(
+            PLANNER_INSTRUCTIONS
+            + "\nWorkspace domain guidance:\n"
+            + domain_context(key, tenant_id=tenant_key, stage="planner")
+            + "\nWorkspace catalog:\n"
+            + routing_catalog(key, tenant_id=tenant_key)
+        ),
+        retries=3,
+        model_settings=model_settings(),
     )
 
     @agent.output_validator
     def enforce_workspace(plan: ExecutionPlan) -> ExecutionPlan:
         if (plan.tenant_id, plan.workspace_id) != (tenant_key, key):
-            raise ModelRetry(f'Use only tenant {tenant_key}, workspace {key}')
+            raise ModelRetry(f"Use only tenant {tenant_key}, workspace {key}")
+        profile = get_domain_profile(key, tenant_id=tenant_key)
+        if any(
+            re.search(pattern, question, re.IGNORECASE)
+            for pattern in profile.python_required_patterns
+        ):
+            if plan.execution_mode != "sql_python":
+                raise ModelRetry(
+                    "Workspace analysis guidance requires SQL preparation followed by Python for this question. Publish a sql_python plan with its specific algorithm, complete SQL inputs and python_reason."
+                )
         # Clarifications already identified by classification cannot be dropped
         # by the planner or silently replaced with invented decision rules.
-        pending = {item.objective.strip().casefold(): item for item in plan.deferred_objectives}
+        pending = {
+            item.objective.strip().casefold(): item for item in plan.deferred_objectives
+        }
         for item in deferred:
             pending[item.objective.strip().casefold()] = item
         plan.deferred_objectives = list(pending.values())
         return consolidate_python_steps(plan)
 
-    prompt = json.dumps({'question': question, 'classified_intent': intent.model_dump()})
+    prompt = json.dumps(
+        {"question": question, "classified_intent": intent.model_dump()}
+    )
     return (await agent.run(prompt, usage_limits=UsageLimits(request_limit=4))).output

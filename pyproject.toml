@@ -12,4 +12,6 @@ dependencies = [
     "pydantic-monty>=1.4.0",
     "python-dotenv>=1.2.4",
     "sqlglot>=30.25.0",
+    "black>=26.10.1,<27.0.0",
+    "isort>=9.0.2,<10.0.0",
 ]

@@ -1,34 +1,196 @@
 {
   "profiles": {
     "credit_cards": {
-      "description": "Credit card customers, cards, purchases, refunds and spending.",
+      "description": "Synthetic credit-card spending, variants, customer segments, monthly profitability and credit-risk sensitivity analysis.",
       "glossary": {
         "card": "Credit card",
-        "spending": "Approved purchase amounts net of approved refunds, grouped by currency"
+        "spending": "Approved purchase amounts net of approved refunds, grouped by currency",
+        "variant": "Product label in cc_products.variant_name, assigned to cards through cc_card_profiles; distinct from raw card_tier or network.",
+        "Diners Black": "A fictional analytical card variant in this sample; resolve its exact variant_id from cc_products.",
+        "segment": "Customer commercial segment in cc_card_profiles.segment: SALARIED, SELF_EMPLOYED or AFFLUENT; not merchant category.",
+        "profitability": "Synthetic pre-tax contribution profit in INR: interest + fee + interchange income minus funding, credit, fixed/variable operating, rewards and network costs.",
+        "opex": "Fixed plus variable operating expenses; does not include funding, credit, rewards or network costs.",
+        "credit cost": "Modeled credit-loss expense; distinct from negative transaction refunds and declined transactions.",
+        "cost of funds": "Annual funding rate applied to funded_balance_inr using actual days/365.",
+        "bps": "Basis points: 1 bp = 0.0001; 50 bps = 0.005 and 20 bps = 0.002 as decimal rates.",
+        "P&L": "Profit and loss components with income positive and expenses deducted.",
+        "roll rate": "Balance-weighted transition probability from one delinquency bucket to another during a monthly synthetic cohort observation.",
+        "delinquency": "Balance exposures in CURRENT, DPD_1_29, DPD_30_89 and DEFAULT buckets; not transaction approval/decline status.",
+        "PAT": "Profit after tax: pbt_inr minus tax_expense_inr, distinct from profit_inr (pre-tax contribution profit).",
+        "PBT": "Pre-tax contribution profit; pbt_inr equals profit_inr in the synthetic fixture.",
+        "ENR": "Ending net receivables; ending_net_receivables_inr is total ENR, revolving_enr_inr is its revolving portion.",
+        "ANR": "Average net receivables; average_net_receivables_inr is total ANR, revolving_anr_inr is its revolving portion.",
+        "COF": "Annual cost-of-funds rate, stored as annual_funding_rate; apply changes in basis points to funded balance and the period fraction.",
+        "revolve rate": "Balance share revolving_enr_inr / ending_net_receivables_inr; not the interest yield or a count of customers.",
+        "revolve yield": "Annual interest yield on revolving ANR, stored as annual_revolve_yield.",
+        "transactor share": "Balance-based share of total ANR that is non-revolving, stored as decimal transactor_share. Revolving ANR = total ANR * (1 - transactor share).",
+        "transactor_share_pct_pt_change": "Absolute change in percentage points: +5 means add 0.05 to transactor_share, NOT multiply the share by 1.05.",
+        "portfolio margin": "By default, annualized net interest margin (NIM): SUM(interest income - funding cost) / SUM(total ANR * days/365). It is not PAT or contribution-profit margin."
       },
       "common_instructions": [
         "This workspace contains entirely synthetic credit card data from January-June 2026.",
         "For spending, include APPROVED transactions only. Approved refunds are already negative amounts; do not subtract them twice.",
-        "Keep transaction currencies separate or explicitly filter one currency. Missing transactions in one currency do not imply zero spending in all currencies."
+        "Keep transaction currencies separate or explicitly filter one currency. Missing transactions in one currency do not imply zero spending in all currencies.",
+        "Financial/risk questions use the synthetic monthly INR extensions; never infer income, costs, losses, funding balances or delinquency from transaction amounts, credit limits or approval status. Original multi-currency spending rules still apply to raw transaction reports.",
+        "For profitability/risk questions without a requested period, use the latest available financial month, disclose the actual month, and use the preceding month for month-on-month comparisons. General spending questions retain their requested/full observed period.",
+        "Rates in the product and financial tables are annual decimal rates; period amounts use balance * annual_rate * days_in_period / day_count_basis, with basis 365. Rates, profits, expenses and exposure bases must not be interchanged.",
+        "Financial facts are at card-month grain, profiles at card grain, and products at variant grain. Aggregate before joining facts to raw transactions or risk tables; joining on variant alone can multiply amounts. Never sum repeated cohort_opening_balance_inr across destination rows.",
+        "Use registered cards from profiles/financial rows as the denominator, including zero-spend cards; report period and currency. Profit/card and spend/card use total period profit or spend divided by COUNT(DISTINCT card_id); average monthly profit/card uses card-month count and must be labeled separately.",
+        "Profit margin means profit / total revenue (undefined for zero revenue). Annualized contribution margin on receivables means profit / SUM(average_receivables_inr * days/365). Identify the denominator and do not average per-card ratios.",
+        "approved_net_spend_inr is customer spending, NOT issuer revenue. Bank revenue is total_revenue_inr = interest_income_inr + fee_income_inr + interchange_income_inr. Never alias spending as total_revenue, income or profitability. For financial ratios use these accounting amounts and explicit balance bases.",
+        "Explicit scenario constraints take priority over legacy QUES.md spend sensitivities. In a PAT scenario that holds rewards, other fees, opex and funding flat, do not apply the older spend_linked_cost_inr scaling rule. A variable X or Y without numerical values calls for a formula or focused clarification, not invented default shocks.",
+        "New financial fields include ending_net_receivables_inr, average_net_receivables_inr, revolving_enr_inr, revolving_anr_inr, transactor_anr_inr, transactor_share, revolve_rate, annual_revolve_yield, pbt_inr, tax_rate, tax_loss_benefit_recognized, tax_expense_inr and pat_inr. The stationary-within-month seed sets ENR=ANR, but they remain different financial concepts.",
+        "The seed uses a synthetic flat 25% tax rate with full recognition of tax benefits on losses (tax_loss_benefit_recognized=true). Tax is rounded half-away-from-zero to paise per card before aggregation; sum the recorded allocated taxes/PAT for baseline. Do not imply this rate or loss policy is tax law. Respect supplied replacement tax assumptions.",
+        "Unless the question explicitly says contribution margin or profit/revenue margin, portfolio margin now means annualized NIM on total ANR. Keep its denominator fixed in the COF/yield/mix sensitivity; percentages, percentage points and basis points are different units."
       ],
       "classifier_instructions": [
         "Interpret customers, cards, purchases, refunds and merchants in the credit card domain of this workspace.",
-        "A request to show spending and propose a next action contains separate objectives. Treat the spending report as ready; clarify any undefined action framework without blocking the report."
+        "A request to show spending and propose a next action contains separate objectives. Treat the spending report as ready; clarify any undefined action framework without blocking the report.",
+        "Interpret the nine QUES.md intents as profitability ranking, variant driver analysis, commercial sourcing comparison, segment credit-loss comparison, per-card metric comparison, sensitivity scenario, funding sensitivity, month-on-month attribution and credit-cost forecasting. Do not mistake \"variant\" for an implementation variant or \"segment\" for merchant category.",
+        "Questions naming Diners Black are already specific. Preserve their product filter. For compound requests, retain every requested metric and scenario change; do not replace profitability with spending or ask the user to choose SQL/Python.",
+        "Use configured latest-month, segment and metric definitions for these business questions. Preserve explicit periods, bases and user assumptions; clarify only a remaining material business ambiguity, such as whether an unspecified funding-rate change is up or down.",
+        "For \"which variant is dragging profitability\", the objective is a ranking of signed variant contribution profit. Do not add portfolio-average comparisons, variance calculations or benchmark requirements not present in the question.",
+        "Distinguish an adjusted PAT scenario with explicit flat P&L lines from a generic pre-tax spend sensitivity. Preserve every held-flat condition, the flat revolve rate, X percent and Y bps. Do not silently replace PAT with PBT.",
+        "For combined COF, revolve-yield and transactor-share shifts, preserve signed changes and their units. A positive transactor_share_pct_pt_change is an increase in transactor share, so revolving ANR declines; it is not an increase in revolve share.",
+        "The concise business questions about PAT-per-customer uncertainty, the credit-loss level exceeded in only 5% of scenarios, balanced customer review groups, and grouping customers with similar per-card economics are ready analytical intents with configured defaults. Do not ask the user to specify an algorithm, code, simulation count or initialization; the planner selects those. Preserve any explicit business overrides."
       ],
       "planner_instructions": [
         "Join card transactions to customers by customer_id and to credit cards by card_id. Aggregate at the requested customer/card/category grain before joining other aggregates.",
         "Include the selected transaction status and currency in validation checks.",
-        "For a business request for a 95% uncertainty range around average observed daily spending, use a nonparametric bootstrap of daily net spending: 1000 resamples with replacement, seed 42, nearest-rank 2.5th and 97.5th percentiles, exact decimal amounts. Query observed daily totals first, then perform resampling in Python. Publish these analysis defaults and explain that missing days are not zero-filled and the interval is not a forecast. Do not ask the business user to choose a language or provide an algorithm."
+        "For a business request for a 95% uncertainty range around average observed daily spending, use a nonparametric bootstrap of daily net spending: 1000 resamples with replacement, seed 42, nearest-rank 2.5th and 97.5th percentiles, exact decimal amounts. Query observed daily totals first, then perform resampling in Python. Publish these analysis defaults and explain that missing days are not zero-filled and the interval is not a forecast. Do not ask the business user to choose a language or provide an algorithm.",
+        "Available tables: cc_products (variant definitions/rates), cc_card_profiles (card/customer/variant/segment), cc_monthly_financials (INR card-month P&L and balance bases), cc_delinquency_monthly (month/variant/segment/bucket exposures), cc_roll_rates_monthly (month/variant/segment/from/to cohort movements). Inspect actual schemas before generating SQL.",
+        "QUES 1, \"which variant is dragging profitability\": latest-month SQL ranking of SUM(profit_inr) ascending by variant, profit per distinct card, revenues, costs and card count. Distinguish negative from positive contribution using the returned signed values; no portfolio-average benchmark is required. Use one SQL ranking query; do not add separate benchmark/flag/reranking steps unless requested.",
+        "QUES 2, \"what factors in Diners Black\": filter cc_products.variant_name, summarize each P&L income/expense and per-card amounts; rank expense burdens and compare with other variants for the same period/basis. Do not call correlation causal or treat costs as revenue.",
+        "QUES 3, sourcing high profitability/less opex: compare variants by profit/card, opex/card, total profit, card count and credit cost. Show the Pareto trade-off (higher profit/card, lower opex/card); recommend only a supported synthetic commercial comparison, not an invented weighted score or acquisition forecast. Use provided thresholds/weights when supplied.",
+        "QUES 4, high-loss segment: rank profile segments by SUM(credit_cost_inr), credit cost per card and annualized credit cost / receivables exposure-years; also show contribution profit. Distinguish high loss rate from high absolute loss due to portfolio size; never interpret refunds or spend as credit losses.",
+        "QUES 5, segment comparison: join monthly financials to card profiles and group by segment; return period profit, approved INR net spend, distinct-card denominator, profit/card and spend/card. Include zero-spend cards and keep customer/card/card-month counts distinct.",
+        "Legacy QUES 6 only when no flat-cost/PAT/revolving-balance scenario is specified, spend +10% and credit cost +50bps: adjusted_profit = base_profit + 0.10 * SUM(spend_linked_revenue_inr - spend_linked_cost_inr) - 0.005 * SUM(average_receivables_inr * days_in_period / day_count_basis). Hold fee/interest income, balances, funding cost and fixed opex unchanged. The spend-linked model assumes fixed take-rates; disclose this scenario and do not increase every revenue or cost by 10%. Aggregate linear sensitivities in SQL, not Python.",
+        "QUES 7, funding change 20bps: a +20bps change reduces profit by 0.002 * SUM(funded_balance_inr * days_in_period / day_count_basis); a decrease reverses the sign. If direction is unstated show both +20bps/-20bps sensitivities, with no invented direction. Report INR profit impact and annualized receivables-margin change using its proper exposure-year denominator; funding and receivables bases are explicit, not spend or credit limit.",
+        "QUES 8, month-on-month attribution: compare latest and preceding month using signed deltas for interest, fee and interchange income, and negative deltas for funding, credit, fixed opex, variable opex, rewards and network costs. Return the component bridge ranked by absolute contribution; reconcile its sum exactly to change in total profit. Do not add total_cost or opex again alongside their components. Use common periods and disclose composition changes.",
+        "QUES 9, forecast credit cost: default to next-month conditional expected loss using latest available delinquency exposures and matching latest observed transition matrix by variant/segment/currency/from_bucket. p(from,to) = SUM(transitioned_balance_inr) / one cohort_opening_balance_inr per origin cohort; verify row probabilities sum to one. Apply p(from,DEFAULT) to non-default balance_inr, multiply by loss_given_default, and sum. Exclude already-default exposures from new defaults. Show observed bucket/roll-rate changes vs previous month and forecast assumptions/as-of/horizon. Do not sum repeated opening balances across destinations, use unweighted averages of rates, or double-count the DEFAULT absorbing state.",
+        "The default credit-cost forecast is a fixed-book, one-step scenario with no new lending, repayments, recoveries or changes in transition probabilities. Six synthetic monthly observations do not support claiming a trained or validated statistical forecast. Show expected loss separately from recorded P&L credit_cost_inr, which follows independent synthetic accrual assumptions. If a user requests multi-step simulation/uncertainty, publish explicit assumptions and use Python only where the iterative algorithm needs it; default one-step matrix sums can run in SQL.",
+        "Validation checks for financial questions include cardinality, INR units, selected month, unique-card denominator, P&L reconciliation, scenario basis/rate/day-count conversion and risk-cohort probability conservation as applicable. Obtain requested totals, ratios, deltas and scenario outputs in execution; the summary must not calculate them mentally.",
+        "When reporting rates as percentages or basis points, compute explicit display columns in SQL (decimal rate * 100 or * 10000). Supply signed losses, absolute loss magnitudes if needed, and any requested display ratios as execution evidence; do not leave conversions for the summarizer.",
+        "A profitability ranking need not introduce a revenue comparison; if revenue is requested or displayed, plan SUM(total_revenue_inr), never SUM(approved_net_spend_inr). Use a weighted portfolio profit/card benchmark = SUM(profit_inr)/COUNT(DISTINCT card_id), not the unweighted average of variant ratios.",
+        "New flat-cost PAT scenario: g=X/100, dc=Y/10000; flat revolve rate implies revolving ENR'=revolving ENR*(1+g) and total ENR'=total ENR*(1+g). Hold the ENR-to-ANR conversion fixed so revolving ANR also scales by 1+g, with annual revolve yield unchanged. Interest income'=recorded interest*(1+g). Assume unchanged interchange take-rate, so interchange income'=recorded interchange*(1+g); disclose this assumption or honor an explicit flat-interchange override.",
+        "Flat-cost PAT credit-cost basis defaults to total ENR: CC'=round(total ENR*(1+g)*(annual_credit_cost_rate+dc)*days/365,2). Increased volume affects the existing credit-cost rate as well as the added bps. If the user specifies revolving ENR as the basis, use that explicitly and reconcile the baseline cost to the changed basis; do not mix bases unnoticed.",
+        "Flat-cost PAT: keep fee income, fixed and variable opex, rewards, network expenses and funding COST (not just COF rate) at baseline. PBT'=base PBT+(interest'-interest)+(interchange'-interchange)-(CC'-CC). Recompute tax and PAT using the stated tax policy; with recognized loss benefits tax=round(PBT'*tax_rate,2), otherwise tax=round(max(PBT',0)*tax_rate,2). Round currency per card then aggregate. Never label adjusted pre-tax profit as PAT.",
+        "COF/yield/mix NIM scenario: dc=cof_bps_change/10000, dy=revolve_yield_bps_change/10000, dt=transactor_share_pct_pt_change/100. Hold total ANR and funded balance fixed. T'=T+dt; revolving ANR'=ANR*(1-T'); yield'=annual_revolve_yield+dy; COF'=annual_funding_rate+dc. Anchor to recorded interest/funding amounts and calculate their deltas to avoid zero-shock drift from rounded baseline amounts/yields.",
+        "Combined NII impact = [base revolving ANR*dy - total ANR*dt*base revolve yield - total ANR*dt*dy - funded balance*dc]*days/365. Include the yield-by-mix interaction term; adding three isolated sensitivity effects misses it. Annualized NIM'=(base NII+combined impact)/SUM(total ANR*days/365). Return base/adjusted NII, base/adjusted NIM in rates and percent, NIM change in bps and the component impacts. COF changes expenses; revolve yield changes income, not funding cost.",
+        "Validate X>=-100%, changed credit-cost rates nonnegative, T+dt between 0 and 1 for EVERY selected row, nonnegative COF/yields under the synthetic scenario policy, and nonzero NIM denominator. Reject invalid scenarios and request valid values; do not clip shares or drop invalid cards to produce a partial portfolio result. Missing numeric changes require clarification or a symbolic formula.",
+        "These scenarios are deterministic arithmetic and can run in SQL. Reference templates are queries/credit_cards/scenarios/10_flat_cost_pat.sql and 11_portfolio_nim.sql; their input CTE numbers are examples, not user defaults. Parameter values in the actual question override those examples. Cast intermediate money/rate expressions to bounded decimal precision before summing or dividing to avoid Decimal128 overflow.",
+        "For the configured portfolio NIM recipe, use its checked row-level SQL unchanged with the actual question parameters. A configured recipe plan is published with source hash before execution. Other wording or extra filters/objectives continue through normal planning; never silently discard those constraints.",
+        "For uncertainty in average PAT per customer: use latest-month PAT summed by whole customer, include all registered customers (zero where appropriate), then run a 1000-resample customer bootstrap with seed 42 and nearest-rank 2.5th/97.5th percentile bounds in Python. Report the observed mean separately. This customer-mix question requires sql_python; do not substitute normal-theory SQL intervals or daily-spending observations.",
+        "For expected next-month credit loss and a loss exceeded in only 5% of scenarios: use sql_python. SQL prepares latest non-default exposures and matching conditional default transition probabilities/LGD by variant/segment/currency/from_bucket. Python performs 1000 independent block-default simulations with seed 42 and returns mean and nearest-rank 95th-percentile loss. Each exposure block defaults in full or not at all; exclude existing defaults. Publish this coarse fixed-book assumption, not borrower-level predictive validity. This distribution request overrides the simple expected-loss SQL-only default.",
+        "For roughly balanced customer review groups, use sql_python: aggregate approved INR net spend per registered customer in SQL, preserve negative refunds and zero-spend customers, then assign whole customers largest-first to the group with lowest running spend in Python. Customer-ID and group-number tie breaks apply. Use requested Jan-June dates; output members, totals and the gap. Disclose approximate grouping, not optimal allocation.",
+        "For three customer segments with similar per-card spending, profitability and operating cost, use sql_python. SQL prepares one row per customer for latest-month SUM(profit_inr)/distinct cards, SUM(approved_net_spend_inr)/distinct cards and SUM(opex_inr)/distinct cards. Python standardizes each feature using population standard deviation, ignores zero-variance dimensions, and iterates k-means up to 50 times or until assignments stabilize. Initialize deterministically: lowest customer ID first, then the point farthest from its nearest chosen center with customer-ID tie breaks. Retain the previous center for empty clusters; disclose fewer than three distinct profiles instead of inventing differences. Return members, counts and feature centroids in original units. No scikit-learn is available.",
+        "For the four configured business-question families above, combine related Python outputs in one step after SQL preparation. These defaults supply the implementation; they must not be requested from the business user. Publish the method and synthetic-data limitations. Explicit user business constraints take priority."
       ],
       "executor_instructions": [
         "Report spending amounts with their currencies and applied status filters. Preserve exact decimal precision.",
         "Do not invent fraud scores, credit decisions or next-action policies from these sample transactions.",
-        "For the default 95% bootstrap confidence range: for each of 1000 resamples draw n observed daily totals with replacement and calculate its mean. Sort those 1000 means. Nearest-rank percentile indices are ceil((percent/100)*1000)-1: index 24 for 2.5 percent and index 974 for 97.5 percent. Do not pass percentages as proportions or multiply 2.5 or 97.5 directly by the sample count. Use seed 42. Return observed_days, mean_daily_inr, lower_95_ci_inr, upper_95_ci_inr, confidence_level_pct=95, resamples=1000, seed=42, and percentile levels 2.5 and 97.5. Check that the interval is non-degenerate for variable observed totals and that its lower bound is below its upper bound; report an error if the calculation fails."
+        "For the default 95% bootstrap confidence range: for each of 1000 resamples draw n observed daily totals with replacement and calculate its mean. Sort those 1000 means. Nearest-rank percentile indices are ceil((percent/100)*1000)-1: index 24 for 2.5 percent and index 974 for 97.5 percent. Do not pass percentages as proportions or multiply 2.5 or 97.5 directly by the sample count. Use seed 42. Return observed_days, mean_daily_inr, lower_95_ci_inr, upper_95_ci_inr, confidence_level_pct=95, resamples=1000, seed=42, and percentile levels 2.5 and 97.5. Check that the interval is non-degenerate for variable observed totals and that its lower bound is below its upper bound; report an error if the calculation fails.",
+        "Use profiles.variant_id to join products and profiles.card_id to join financials. Distinct raw card_tier/network values are not product variants. Filter Diners Black through products.variant_name, not a fabricated field in raw transactions.",
+        "Use stored profit_inr and reconcile it to stored revenue minus costs when checking P&L. Expenses are positive amounts subtracted once. Financial approved_net_spend_inr already includes negative approved INR refunds. Do not subtract refunds again.",
+        "Perform financial arithmetic using Decimal/SQL decimals. Convert 10% to 0.10, +50bps to +0.005 and +/-20bps to +/-0.002; retain annual/period units and days/365. Return all base, delta and adjusted amounts with explicit labels.",
+        "For risk calculations aggregate transition amounts and matching origin bases at the same cohort grain; check denominators and missing cohorts before computing rates. Report missing/zero exposure groups instead of inventing rates. Label the next-month forecast conditional and synthetic; do not fabricate fit statistics or confidence intervals.",
+        "For repeated monthly financial rows, use COUNT(DISTINCT card_id) for period per-card metrics. Do not count transactions as cards or sum raw transactions after a many-month join. For latest-month ranking verify the month using MAX(month) evidence.",
+        "In DataFusion sensitivity SQL, use explicit decimal casts such as CAST('0.005' AS DECIMAL(8,6)); bare fractional literals can promote decimal amounts to floating point. Prefer supported joins/aggregates over EXISTS expressions in projections for Pareto flags.",
+        "For QUES 1 the simplest supported query is to join cc_monthly_financials f to cc_card_profiles pr ON pr.card_id=f.card_id and cc_products p ON p.variant_id=pr.variant_id; filter f.month=(SELECT MAX(month) FROM cc_monthly_financials); GROUP BY f.month,p.variant_name; ORDER BY SUM(f.profit_inr) ASC. Use p.variant_name, not pr.variant_name. Include per-card metrics and components as needed without unnecessary benchmark joins.",
+        "DataFusion/Arrow may reject comparisons between different decimal precisions, particularly per-card ratios versus AVG/window benchmarks. Explicitly CAST both operands to the same DECIMAL(38,6) before comparing. Do not fix financial precision errors by converting amounts to float. ORDER BY aggregated profit suffices for a worst-variant ranking.",
+        "Include the actual selected month in every financial result set (not just the SQL WHERE clause), so the final answer has date evidence. Monetary loss magnitudes and display percentages must be computed explicitly when requested. Do not call approved net spend revenue.",
+        "For flat-cost PAT, show the selected credit-cost exposure basis, ENR/revolving ANR change, interest/interchange changes, credit-cost change, base/adjusted PBT, tax and PAT. Report held-flat line checks. Keep funding cost fixed even though receivables grow, because this scenario explicitly requires it.",
+        "For NIM sensitivities transactor share is balance-weighted; add pp/100 to EACH row share while keeping total ANR fixed. Never apply +5pp as *1.05, +5 as a decimal, a rate shock /10000, or an increase in revolving share. Apply row-level yields before aggregation; do not multiply portfolio totals by unweighted average shares or yields.",
+        "Use the supplied base tax policy, Decimal arithmetic and SQL ROUND(...,2) half-away-from-zero on card-level monetary amounts before aggregation. Use unrounded bounded-decimal intermediate NII sensitivities and round only display outputs for the NIM scenario. A zero-shock scenario must reproduce baseline PBT, tax, PAT and NIM.",
+        "Check invalid_input_rows or equivalent guard first; if any selected row violates parameter bounds, return a validation message with no adjusted portfolio result. Validate share bounds per row, not only the portfolio average. Return scenario input values and percentage/bps display conversions as evidence.",
+        "For currency expense rounding, multiply exposure * annual rate * days before dividing by day_count_basis; pre-rounding days/365 can shift half-paise ties. Use the reference PAT query and preserve zero-shock identity.",
+        "For configured PAT bootstrap, loss simulation, review balancing and segmentation questions, execute the required Python algorithm on complete SQL inputs using supported primitives. Return structured results and method parameters. Use Decimal for money, and convert only dimensionless standardized clustering features to float if required. Do not replace the required algorithm with SQL-only descriptive totals or invent conclusions when there are too few distinct observations."
       ],
       "tone": "Concise, practical and professional. Use familiar business language for a card operations manager.",
       "summarizer_instructions": [
         "Use card spending, purchases, refunds and merchant categories in the workspace sense. State currencies and periods clearly.",
-        "Lead with the requested spending insight. Explain net spending as approved purchases with approved refunds already deducted. Do not include SQL/code jargon unless requested."
+        "Lead with the requested spending insight. Explain net spending as approved purchases with approved refunds already deducted. Do not include SQL/code jargon unless requested.",
+        "For financial answers lead with the requested variant/segment ranking, scenario impact, attribution or conditional forecast. State month, INR, metric denominator and material assumptions. Use exact evidence; report negative contribution profit as a loss and distinguish credit cost from accounting contribution loss.",
+        "Disclose synthetic product economics and risk cohorts. Explain that Diners Black is a fictional analytical variant and the result is not a claim about any real issuer/product. Do not turn descriptive drivers into proven causes, sourcing comparisons into credit decisions, or conditional risk estimates into validated forecasts.",
+        "Show base/change/adjusted amounts for scenarios and signed contributions for P&L bridges. Preserve rate direction, basis points, annualization and the fact that the default +20bps funding scenario and -20bps scenario are different. Use returned values rather than calculating new ratios, totals or future dates in prose.",
+        "For adjusted PAT explicitly distinguish PBT, tax and PAT, identify the credit-cost base and held-flat costs, and disclose unchanged interchange take-rate, ENR/ANR scaling and the synthetic tax/loss-benefit policy. Do not silently reuse the older variable-cost spend scenario.",
+        "For COF/revolve-yield/transactor-share sensitivities say that positive transactor-share pp shifts reduce revolving ANR at fixed total ANR. Show annualized NIM basis and the combined yield/mix interaction. Do not call a percentage-point shift a percentage growth rate or a NIM-bps delta an INR profit amount.",
+        "Use returned _display and _magnitude fields for formatted monetary deltas. Describe a decrease using a positive magnitude (decreases by 178.57bps) or show the signed delta (-178.57bps); do not write decreases by a negative number. Copy rounded fields instead of truncating them. Monetary display values use two decimals, NIM percent fields use their supplied four decimals. All base/adjusted and component values must come from the returned row."
+      ],
+      "summary_additive_fields": [
+        "profit_inr",
+        "total_revenue_inr",
+        "total_cost_inr",
+        "approved_net_spend_inr",
+        "credit_cost_inr",
+        "opex_inr",
+        "expected_credit_loss_inr",
+        "profit_impact_inr",
+        "pbt_inr",
+        "tax_expense_inr",
+        "pat_inr",
+        "adjusted_pbt_inr",
+        "adjusted_tax_inr",
+        "adjusted_pat_inr",
+        "base_nii_inr",
+        "adjusted_nii_inr"
+      ],
+      "summary_partition_fields": [
+        "currency",
+        "month",
+        "forecast_month",
+        "scenario",
+        "variant_id",
+        "segment"
+      ],
+      "sql_recipes": {
+        "portfolio_nim": {
+          "request_pattern": "What is the combined impact on annualized portfolio net interest margin if\\s+COF\\s+(?P<cof_dir>rises|falls|increases|decreases)\\s+(?P<cof>\\d+(?:\\.\\d+)?)\\s+bps,\\s*revolve yield\\s+(?P<yield_dir>rises|falls|increases|decreases)\\s+(?P<yield>\\d+(?:\\.\\d+)?)\\s+bps,\\s*and transactor share\\s+(?P<share_dir>rises|falls|increases|decreases)\\s+(?P<share>\\d+(?:\\.\\d+)?)\\s+percentage points\\?\\s*Hold total ANR and funded balance fixed\\.\\s*Show the change in revolving ANR,\\s*(?:component effects|individual income and funding effects),\\s*the yield[- ]mix interaction,\\s*and base versus adjusted NIM\\.?",
+          "parameters": {
+            "cof_bps_change": {
+              "value_group": "cof",
+              "direction_group": "cof_dir"
+            },
+            "revolve_yield_bps_change": {
+              "value_group": "yield",
+              "direction_group": "yield_dir"
+            },
+            "transactor_share_pct_pt_change": {
+              "value_group": "share",
+              "direction_group": "share_dir"
+            }
+          },
+          "directions": {
+            "rises": 1,
+            "increases": 1,
+            "falls": -1,
+            "decreases": -1
+          },
+          "template_path": "queries/credit_cards/scenarios/11_portfolio_nim.template.sql",
+          "title": "Combined annualized portfolio NIM sensitivity",
+          "reason": "Use the configured row-level SQL calculation for the three signed sensitivity inputs. It filters the latest month, preserves ANR and funded balances, includes the yield/mix interaction and uses bounded Decimal intermediates. No Python calculation is needed.",
+          "expected_output": "Latest month and currency; signed scenario inputs; base and adjusted revolving ANR and change; four NII component impacts; combined impact; base/adjusted NII, annualized NIM percentages and NIM change in bps; input validation count.",
+          "validation_checks": [
+            "Actual average_net_receivables_inr and revolving_anr_inr columns used, not ENR aliases.",
+            "Latest financial month filtered before row-level arithmetic.",
+            "Signed changes are 20bps/10000, 25bps/10000 and 5 percentage points/100 for the example; actual question values override them.",
+            "Calculate row-level yield/share effects, including the interaction, then aggregate; never sum rates or use unweighted average yields.",
+            "Adjusted NII = recorded base NII + combined impact exactly once.",
+            "All components include days/day_count_basis and reconcile to the combined INR change.",
+            "NIM denominator uses fixed total ANR exposure-years; all selected rows must have valid rates/shares."
+          ],
+          "invalid_input_field": "invalid_input_rows",
+          "invalid_input_message": "Invalid NIM scenario: a changed transactor share is outside [0,1] or a changed funding/yield rate is negative. Supply valid signed changes.",
+          "sources": [
+            "credit_cards"
+          ]
+        }
+      },
+      "python_required_patterns": [
+        "(?s)(?=.*\\bPAT\\b)(?=.*\\bcustomer\\b)(?=.*(?:uncertain|95%)).+",
+        "(?s)(?=.*credit.loss)(?=.*(?:5%|95th|95%))(?=.*(?:scenario|range|exceed|simulat)).+",
+        "(?s)(?=.*\\bcustomers?\\b)(?=.*\\breview groups?\\b)(?=.*(?:equal|balanc)).+",
+        "(?s)(?=.*\\bcustomers?\\b)(?=.*\\bsegments?\\b)(?=.*\\bsimilar\\b)(?=.*profitability).+"
       ]
     },
     "smartwealth": {

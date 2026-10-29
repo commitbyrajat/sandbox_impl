@@ -18,18 +18,35 @@
             "credit_cards": {
               "kind": "parquet",
               "location": "data/parquet",
-              "description": "Credit card customers, cards, purchases, refunds, declines, merchants, spending, channels and currencies.",
+              "description": "Synthetic credit-card transactions, product variants, customer segments, monthly INR profitability, funding/credit costs, delinquency exposures and roll-rate cohorts.",
               "tables": {
                 "cc_customers": "customers.parquet",
                 "cc_credit_cards": "credit_cards.parquet",
-                "cc_transactions": "transactions.parquet"
+                "cc_transactions": "transactions.parquet",
+                "cc_products": "products.parquet",
+                "cc_card_profiles": "card_profiles.parquet",
+                "cc_monthly_financials": "monthly_financials.parquet",
+                "cc_delinquency_monthly": "delinquency_monthly.parquet",
+                "cc_roll_rates_monthly": "roll_rates_monthly.parquet"
               },
               "relationships": [
                 "cc_customers.customer_id = cc_credit_cards.customer_id",
                 "cc_transactions.card_id = cc_credit_cards.card_id",
-                "cc_transactions.customer_id = cc_customers.customer_id"
+                "cc_transactions.customer_id = cc_customers.customer_id",
+                "cc_card_profiles.card_id = cc_credit_cards.card_id (one-to-one)",
+                "cc_card_profiles.customer_id = cc_customers.customer_id",
+                "cc_card_profiles.variant_id = cc_products.variant_id",
+                "cc_monthly_financials.card_id = cc_card_profiles.card_id (many months per card)",
+                "Risk tables join on month, variant_id, segment, currency and bucket; aggregate each grain before joining."
               ],
-              "notes": []
+              "notes": [
+                "Financial facts are synthetic INR card-month values for January-June 2026; the original three Parquet files are unchanged.",
+                "Monthly P&L is a separate accounting grain. Its approved_net_spend_inr reconciles to approved INR transactions; other financial inputs are explicit synthetic assumptions, not FX conversions.",
+                "Diners Black is a fictional analytical variant label assigned in cc_card_profiles, not a claim about the original network/card_tier or real product economics.",
+                "Risk cohorts are synthetic aggregate transition observations, not account-level trajectories or audited provision movements.",
+                "Monthly financials now include ENR/ANR split, balance-based transactor/revolve shares, calibrated annual revolve yield, PBT, synthetic tax and PAT. Flat-cost PAT and COF/yield/transactor-share NIM sensitivities have different assumptions; follow the explicit question.",
+                "transactor_share_pct_pt_change is an absolute percentage-point change: +5 adds 0.05 to transactor_share at fixed total ANR. The tax fixture assumes 25% with loss benefits recognized; it is not statutory tax guidance."
+              ]
             }
           },
           "domain_profile": "credit_cards"
