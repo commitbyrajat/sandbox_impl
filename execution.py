@@ -22,7 +22,7 @@ from domain_instructions import domain_context, get_domain_profile
 from model_config import configured_model
 from planning import ExecutionPlan
 from query_recipes import render_sql_recipe
-from runtime import model_settings, result_preview, trace
+from runtime import model_settings, result_preview, tool_retry_limit, trace
 
 INSTRUCTIONS = """
 Implement the supplied execution plan in order, then return a compact execution
@@ -197,6 +197,8 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
         raise ValueError(
             "No executor needed for a clarification or unsupported question"
         )
+    retries = tool_retry_limit()
+    trace(f"EXECUTION tool retries: {retries} per tool (excluding the initial attempt)")
     agent = Agent(
         (
             model
@@ -215,7 +217,7 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
             + "\nExecution plan:\n"
             + plan.model_dump_json()
         ),
-        retries=3,
+        retries={"tools": retries, "output": 3},
         model_settings=model_settings(),
     )
 
@@ -235,10 +237,18 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
             raise ModelRetry("All planned steps are complete; answer using the results")
         expected = plan.steps[index]
         if (step_id, action) != (expected.step_id, expected.action):
-            raise ModelRetry(
+            tool_name = {
+                "schema": "describe_sources",
+                "sql": "run_sql",
+                "python": "run_python",
+            }[expected.action]
+            message = (
                 f"Execute step {expected.step_id} ({expected.action}) next: "
                 + expected.instruction
+                + f" Use {tool_name} with step_id={expected.step_id!r}; do not rerun completed steps."
             )
+            trace(f"TOOL {ctx.tool_name}: {step_id} rejected: {message}")
+            raise ModelRetry(message)
 
     @agent.output_validator
     def require_evidence(ctx: RunContext[Dependencies], answer: str) -> str:
@@ -392,7 +402,7 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                 ctx.deps.completed_steps.append(step_id)
                 trace(f"TOOL run_python: {step_id} completed")
                 return payload
-            except (MontyError, ValueError, RuntimeError) as exc:
+            except (MontyError, ValueError, TypeError, RuntimeError) as exc:
                 trace(f"TOOL run_python: {step_id} failed: {str(exc)[:1000]}")
                 feedback = str(exc)[:2000]
                 if "suspend" in feedback or "suspension" in feedback:
@@ -401,6 +411,18 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                         "Import modules and define all helper functions in this snippet; "
                         "read SQL inputs from data[result_id]."
                     )
+                available = {
+                    key: result["columns"]
+                    for key, result in ctx.deps.sources.results.items()
+                    if key in result_ids
+                }
+                feedback += (
+                    " Stored SQL result columns: "
+                    + json.dumps(available)
+                    + f". Correct run_python for step_id={step_id!r} using these exact keys."
+                    + " Keep completed SQL results; do not rerun SQL or replace host data."
+                    + " Bind a local rows variable from data[result_id]."
+                )
                 raise ModelRetry(f"Python execution failed: {feedback}") from exc
 
     return agent

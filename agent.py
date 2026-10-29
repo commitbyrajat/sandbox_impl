@@ -13,8 +13,7 @@ from pydantic_ai.models import Model
 from data_access import DataSources
 from execution import INSTRUCTIONS, Dependencies, create_agent
 from model_config import configured_model
-from pipeline import (Pipeline, PipelineModels, PipelineRequest,
-                      PipelineServices)
+from pipeline import Pipeline, PipelineModels, PipelineRequest, PipelineServices
 from planning import ExecutionPlan, QuestionIntent
 from runtime import PipelineModelTimeout
 from summarization import append_clarifications
@@ -161,6 +160,10 @@ def main() -> None:
             detail = str(exc)
             if isinstance(exc, UnexpectedModelBehavior):
                 detail += " Use --trace to see stage and tool correction failures."
+                if "exceeded max retries count" in str(exc):
+                    detail += " Increase AGENT_TOOL_RETRIES in .env to allow more tool corrections."
+                    if exc.__cause__ is not None:
+                        detail += " Last tool error: " + str(exc.__cause__)[:1000]
                 if "token limit" in str(exc).lower():
                     detail += " Set --max-tokens 8192 (or LITELLM_MAX_OUTPUT_TOKENS in .env) to raise the output budget."
         if "Invalid model name" in str(exc):

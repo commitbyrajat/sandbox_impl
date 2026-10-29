@@ -145,6 +145,26 @@ for a model request), `LITELLM_MAX_RETRIES` (default 0), and
 `.env.example`. The total deadline must be at least the attempt timeout. These
 settings do not override a shorter LiteLLM/backend server timeout.
 
+Set `AGENT_TOOL_RETRIES=5` in `.env` to allow more SQL/Python corrections, or
+override it for one command:
+
+```sh
+AGENT_TOOL_RETRIES=5 uv run agent.py --tenant-id 1 --workspace-id 1 --trace --max-tokens 8192 \
+  "Split customers into three review groups with roughly equal January–June 2026 approved INR net spending. Show members and totals."
+```
+
+The default is **3 retries per executor tool**, excluding the initial attempt;
+`0` disables retries. Shell environment values take precedence over `.env`.
+This controls `describe_sources`, `run_sql` and `run_python`, independently of
+`LITELLM_MAX_RETRIES` (HTTP retries) and output-validation retries. The executor's
+overall limits of 15 model requests and 25 tool calls still apply.
+
+A missing Python key must be corrected using the actual SQL output aliases;
+increasing retries does not repair code by itself. Python failures return the
+error and stored result columns to the LLM. A `run_sql` retry-limit error after
+a Python failure can mean the model tried to rerun SQL while the Python step was
+pending; `--trace` now reports these rejected out-of-order calls explicitly.
+
 Override the output budget for one run with `--max-tokens` (a positive integer),
 or set `LITELLM_MAX_OUTPUT_TOKENS` in `.env` for the default. Precedence is
 `--max-tokens` / `ask(..., max_tokens=...)`, then the environment/`.env`, then 4096.

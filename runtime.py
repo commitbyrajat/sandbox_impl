@@ -67,6 +67,18 @@ def model_settings() -> dict:
     }
 
 
+def tool_retry_limit() -> int:
+    """Read the executor's per-tool correction budget, separately from HTTP retries."""
+    load_dotenv(ROOT / ".env")
+    try:
+        value = int(os.getenv("AGENT_TOOL_RETRIES", "3"))
+    except ValueError:
+        raise ValueError("AGENT_TOOL_RETRIES must be a nonnegative integer") from None
+    if value < 0:
+        raise ValueError("AGENT_TOOL_RETRIES must be a nonnegative integer")
+    return value
+
+
 def trace(message: str) -> None:
     if TRACE_ENABLED.get():
         print(message, file=sys.stderr, flush=True)
