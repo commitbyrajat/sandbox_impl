@@ -319,6 +319,20 @@
             "Use every origin-cohort key, matching dpd_bucket to from_bucket. Do not sum a repeated opening cohort balance across destination rows. Aggregate or filter destination transitions before combining origin exposures."
           ]
         }
+      },
+      "question_guidance": {
+        "customer_pat_uncertainty": {
+          "request_pattern": "(?s)(?=.*\\bPAT\\b)(?=.*\\bcustomer\\b)(?=.*(?:uncertain|95%)).+",
+          "planner_instructions": [
+            "For PAT-per-customer uncertainty, default to the latest available financial month. Do not sum across all months when the user has not requested a historical period. Explicit user period overrides take precedence. Return the actual selected month as SQL evidence.",
+            "Use one observation per registered customer. The population source is cc_customers.customer_id, not monthly financial card IDs or PAT amounts. Select the financial month, attribute card-level pat_inr through the configured card/customer relationships and sum PAT per customer. Preserve registered customers with no selected financials as zero. Declare customer_id in grain and population.result_key; schema/Python steps must have output_contract null.",
+            "Plan one customer bootstrap using scientific.bootstrap: statistic mean, 1000 resamples, seed 42, 95% percentile interval and nearest_rank quantiles. Report the exact observed mean separately; it need not equal the mean of a finite bootstrap distribution. This is uncertainty across the observed customer mix, not a next-month profit forecast."
+          ],
+          "executor_instructions": [
+            "Preserve the selected-period contract: with no explicit user period, PAT is measured for the latest financial month, not pooled across all months. Return that month and one PAT observation for every cc_customers.customer_id using configured joins. Use SQL aliases/types actually returned.",
+            "Use await scientific.bootstrap on customer PAT values, statistic=\"mean\", n_resamples=1000, confidence_level=0.95, method=\"percentile\", quantile_method=\"nearest_rank\", seed=42. Compute the observed mean with original Decimal SQL values and return lower/upper bounds plus method metadata. Do not require the finite bootstrap distribution mean to equal the observed mean."
+          ]
+        }
       }
     },
     "smartwealth": {

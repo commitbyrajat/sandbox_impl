@@ -391,7 +391,8 @@ class ContractPipelineTests(unittest.IsolatedAsyncioTestCase):
             nonlocal calls
             calls += 1
             if calls > 1:
-                self.assertIn("needs output_contract", str(messages[-1]))
+                self.assertIn("output_contract", str(messages[-1]))
+                self.assertIn("Field required", str(messages[-1]))
             return structured_response(
                 info, executable_plan("1", "sql_python", declared=calls > 1)
             )

@@ -39,7 +39,7 @@ class SQLResultContract(BaseModel):
             raise ValueError("max_rows must be at least min_rows")
         if self.population and self.population.result_key not in self.grain:
             raise ValueError(
-                "The population result key must be part of the output grain"
+                f"Population result_key={self.population.result_key!r} must be an observation identity from grain={self.grain!r}. Set result_key to one of those grain fields, not a measure or its alias."
             )
         return self
 
@@ -90,7 +90,7 @@ def validate_contract_sources(contract, sources):
             visited.add(current)
             pending.extend(graph.get(current, set()) - visited)
     raise ValueError(
-        f"Population key {population.table}.{population.source_key} does not represent the configured identity {population.result_key}. Choose a registry population table/key for the output observation grain; do not compare different entity IDs."
+        f"Population key {population.table}.{population.source_key} does not represent the configured identity {population.result_key}. Use a registry population for that observation identity, e.g. {sorted(f'{table}.{key}' for table, key in known_targets)}. Do not compare different entity IDs."
     )
 
 

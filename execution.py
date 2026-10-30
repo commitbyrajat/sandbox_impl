@@ -352,6 +352,10 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
             if result_id in ctx.deps.sources.results
         }
         state["input_repairs_used"] = ctx.deps.input_repairs
+        if isinstance(ctx.prompt, str):
+            state["applicable_workspace_guidance"] = profile.focused_guidance(
+                ctx.prompt, "executor"
+            )
         if ctx.deps.last_python_error:
             state["python_correction"] = ctx.deps.last_python_error
         if ctx.deps.last_sql_diagnostic is not None:
@@ -807,6 +811,11 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                     + " Keep completed SQL results; do not rerun SQL or replace host data."
                     + " Bind a local rows variable from data[result_id]."
                 )
+                if ctx.deps.scientific is not None:
+                    feedback += (
+                        " Scientific API contract (use these actual functions and result keys): "
+                        + json.dumps(scientific_catalog())
+                    )
                 ctx.deps.last_python_error = feedback
                 raise ModelRetry(f"Python execution failed: {feedback}") from exc
 

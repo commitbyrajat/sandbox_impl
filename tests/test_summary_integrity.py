@@ -26,6 +26,58 @@ JOIN sw_amcs a ON a.amc_id=h.amc_id GROUP BY h.amc_id,a.amc_name ORDER BY total_
 
 
 class SummaryIntegrityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_uncertainty_summary_retries_remove_unsupported_rounded_examples(
+        self,
+    ):
+        plan = ExecutionPlan.model_validate(executable_plan("1", "sql_python"))
+        execution = ExecutionResult(
+            "",
+            python_runs=[
+                {
+                    "output": {
+                        "mean": Decimal("17.264"),
+                        "lower": -1263.425,
+                        "upper": 1008.67,
+                        "customers": 20,
+                    },
+                }
+            ],
+        )
+        calls = 0
+
+        def respond(messages, info):
+            nonlocal calls
+            calls += 1
+            self.assertIn("SQL\nrows are calculation inputs", info.instructions)
+            if calls == 1:
+                return ModelResponse(
+                    parts=[
+                        TextPart(
+                            "Average INR 17.26; 95% range -INR 1,263.42 to INR 1,008.67. Customers lose over INR 6,000."
+                        )
+                    ]
+                )
+            feedback = str(messages[-1])
+            self.assertIn("6,000", feedback)
+            self.assertIn("Remove the entire unsupported claim", feedback)
+            self.assertIn("another guessed or coarsely rounded value", feedback)
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        "Average INR 17.26; 95% range -INR 1,263.42 to INR 1,008.67 across 20 customers."
+                    )
+                ]
+            )
+
+        answer = await summarize_result(
+            "How uncertain is average PAT per customer? Show the average and a 95% range.",
+            plan,
+            execution,
+            FunctionModel(respond),
+        )
+        self.assertEqual(calls, 2)
+        self.assertNotIn("6,000", answer)
+
     async def test_actual_query_total_and_disclaimer_are_checked(self):
         sources = DataSources(
             create_context(source_ids=["smartwealth"]), tenant_id="2", workspace_id="2"

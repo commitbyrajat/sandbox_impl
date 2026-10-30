@@ -2,11 +2,12 @@
 
 import json
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pydantic_ai import Agent, ModelRetry, UsageLimits
 from pydantic_ai.models import Model
+from pydantic_ai.capabilities import AbstractCapability
 
 from datasource_mapping import (
     SourceId,
@@ -17,7 +18,7 @@ from datasource_mapping import (
 )
 from domain_instructions import domain_context, get_domain_profile
 from query_recipes import SqlRecipeCall, match_sql_recipe
-from runtime import model_settings
+from runtime import model_settings, trace
 from result_contracts import SQLResultContract, validate_contract_sources
 from scientific_models import scientific_catalog
 
@@ -172,6 +173,57 @@ class ExecutionPlan(BaseModel):
         return self
 
 
+class SchemaPlanningStep(ExecutionStep):
+    action: Literal["schema"]
+    output_contract: None = None
+    input_steps: list[str] = Field(default_factory=list, max_length=0)
+
+
+class SQLPlanningStep(ExecutionStep):
+    action: Literal["sql"]
+    output_contract: SQLResultContract
+    input_steps: list[str] = Field(default_factory=list, max_length=0)
+
+
+class PythonPlanningStep(ExecutionStep):
+    action: Literal["python"]
+    output_contract: None = None
+    input_steps: list[str] = Field(min_length=1)
+
+
+class PlannerOutput(ExecutionPlan):
+    """LLM schema expresses step-specific constraints; stored plans stay compatible."""
+
+    sql_recipe: None = None
+    steps: list[
+        Annotated[
+            SchemaPlanningStep | SQLPlanningStep | PythonPlanningStep,
+            Field(discriminator="action"),
+        ]
+    ] = Field(max_length=12)
+
+
+class PlannerDiagnostics(AbstractCapability):
+    def on_output_validate_error(self, ctx, *, output_context, output, error):
+        errors = (
+            error.errors(include_input=False, include_context=False, include_url=False)
+            if isinstance(error, ValidationError)
+            else str(error)
+        )
+        trace(
+            "PLAN_REJECTED: "
+            + json.dumps(
+                {
+                    "attempt": ctx.retry + 1,
+                    "error_type": type(error).__name__,
+                    "errors": errors,
+                },
+                default=str,
+            )
+        )
+        raise error
+
+
 def consolidate_python_steps(plan: ExecutionPlan) -> ExecutionPlan:
     """Batch adjacent calculations while preserving every requested output."""
     steps = []
@@ -253,6 +305,9 @@ for retrieval, filtering, joins, aggregates, rankings, ratios, window functions
 and supported statistics. Include all required calculations in the steps.
 Plan only requested outputs and supported calculations. Apply the injected domain
 guidance to choose valid measures, grouping levels and interpretation rules.
+When the user omits a period, preserve the workspace's period/as-of defaults in
+the SQL instruction and returned date evidence. Do not expand a snapshot measure
+across all historical periods unless the question or workspace rules require it.
 Use execution_mode sql unless an identified algorithm cannot reasonably be done
 with SQL. Hybrid sql_python plans must first retrieve/pre-aggregate with SQL, then
 include the specific Python calculation and python_reason. Use Python only for
@@ -283,6 +338,10 @@ must return the complete feature/observation datasets, not preliminary date look
 Preserve requested per-unit denominators in the column meanings and SQL instructions.
 Put snapshot lookup queries inside the feature query, or plan a separate SQL step
 with a distinct output contract. Never consume a feature step with a date-only query.
+Schema/Python steps use output_contract=null. Python results are described in
+expected_output; output_contract validates SQL datasets only. A population's
+result_key is an observation ID in grain, never the numerical measure being
+analyzed. Its source_key must represent that same identity in a registry table.
 Use one schema step, at least one SQL step, at most 12 steps. Each step is completed
 by one successful tool call, so split multiple queries into distinct SQL steps.
 List concise validation_checks for the requested results, including completeness,
@@ -414,7 +473,8 @@ async def build_plan(
             )
     agent = Agent(
         model,
-        output_type=ExecutionPlan,
+        output_type=PlannerOutput,
+        capabilities=[PlannerDiagnostics()],
         instructions=(
             PLANNER_INSTRUCTIONS
             + "\nWorkspace domain guidance:\n"
@@ -476,6 +536,12 @@ async def build_plan(
         return consolidate_python_steps(plan)
 
     prompt = json.dumps(
-        {"question": question, "classified_intent": intent.model_dump()}
+        {
+            "question": question,
+            "classified_intent": intent.model_dump(),
+            "applicable_workspace_guidance": get_domain_profile(
+                key, tenant_id=tenant_key
+            ).focused_guidance(question, "planner"),
+        }
     )
     return (await agent.run(prompt, usage_limits=UsageLimits(request_limit=4))).output

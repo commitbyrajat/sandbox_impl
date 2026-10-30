@@ -218,10 +218,32 @@ when that lookup is valid SQL. Preliminary lookups belong inside the feature que
 or in separately planned steps. Existing manually constructed plans can omit
 contracts for compatibility; new generated plans cannot.
 
+The LLM planner uses action-specific step schemas: SQL requires an output contract,
+Python requires upstream `input_steps`, and schema/Python steps use
+`output_contract: null`. This reports independent shape errors together instead
+of exhausting retries on one error at a time. With `--trace`, `PLAN_REJECTED`
+shows each rejection's field paths and validation messages, including the final
+rejection. Planner output retries remain separate from `AGENT_TOOL_RETRIES`.
+
+Profiles may prioritize business-owned instructions under `question_guidance`:
+each named rule supplies a `request_pattern` and planner/executor instruction
+lists. Matching guidance is placed beside the current question/execution state.
+The credit-card PAT-uncertainty guidance preserves the latest-month default,
+registered-customer population and customer-level bootstrap. It supplies no
+prewritten plan, SQL, Python or answer; explicit user periods take precedence.
+
 For contract-based plans, only the tool for the pending step is advertised. During
 Python, the host supplies current result IDs, exact aliases, Arrow/Python types,
 row counts and a small preview before code generation. Python still executes in
 Monty on the complete stored rows. Code/alias errors return feedback for correction.
+The scientific capability catalog lists the bootstrap result keys explicitly
+(`estimate`, `lower`, `upper`, `standard_error`, `bootstrap_distribution`, `method`).
+It is an allowlisted bridge, so SciPy-style names such as `scientific.mean` or
+`confidence_interval` are unavailable. Python retry feedback includes this API
+contract alongside the actual error and stored SQL columns.
+Hybrid summaries lead with the calculated Python metrics. Numeric validation
+rejects invented rounded examples and asks the model to remove the unsupported
+claim or copy an actual result, while preserving the validation checks.
 If the SQL inputs need correction, `request_sql_repair` can reopen a declared SQL
 producer at most **twice per request**. It preserves the published contract,
 invalidates downstream results and Python caches, and issues fresh result IDs.

@@ -113,8 +113,8 @@ class SQLPlannerRouteTests(unittest.IsolatedAsyncioTestCase):
                 }
             else:
                 feedback = str(messages[-1])
-                self.assertIn("Set sql_recipe to null", feedback)
-                self.assertIn("validate and run the query", feedback)
+                self.assertIn("sql_recipe", feedback)
+                self.assertIn("Input should be None", feedback)
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, plan)])
 
         plan = await build_plan(

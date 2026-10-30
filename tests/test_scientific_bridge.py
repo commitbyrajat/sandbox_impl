@@ -344,6 +344,88 @@ class WorkerResourceTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ScientificPipelineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bootstrap_api_error_returns_exact_result_keys_for_correction(self):
+        code = (
+            "import scientific\n"
+            "rows = data['query_1']\n"
+            "values = [row['pat'] for row in rows]\n"
+            "analysis = await scientific.bootstrap(values, n_resamples=100)\n"
+        )
+        actions = [
+            ("describe_sources", {"step_id": "s1"}),
+            (
+                "run_sql",
+                {
+                    "step_id": "s2",
+                    "statement": "SELECT c.customer_id, COALESCE(SUM(f.pat_inr), 0) AS pat FROM cc_customers c LEFT JOIN cc_credit_cards cc ON cc.customer_id=c.customer_id LEFT JOIN cc_monthly_financials f ON f.card_id=cc.card_id AND f.month=(SELECT MAX(month) FROM cc_monthly_financials) GROUP BY c.customer_id ORDER BY c.customer_id",
+                },
+            ),
+            (
+                "run_python",
+                {
+                    "step_id": "s3",
+                    "result_ids": ["query_1"],
+                    "code": code + "analysis['confidence_interval']['lower']",
+                },
+            ),
+            (
+                "run_python",
+                {
+                    "step_id": "s3",
+                    "result_ids": ["query_1"],
+                    "code": code
+                    + "{'mean': sum(values)/len(values), 'lower': analysis['lower'], 'upper': analysis['upper'], 'method': analysis['method']}",
+                },
+            ),
+        ]
+
+        def respond(messages, info):
+            self.assertIn('"returns":', info.instructions)
+            self.assertIn("There is no scientific.mean", info.instructions)
+            turns = tool_returns(messages)
+            if len(turns) == 3:
+                feedback = str(turns[-1].content)
+                self.assertIn("KeyError: confidence_interval", feedback)
+                self.assertIn("result['lower']", feedback)
+                self.assertIn("Keep completed SQL results", feedback)
+            if len(turns) < len(actions):
+                name, args = actions[len(turns)]
+                return ModelResponse(parts=[ToolCallPart(name, args)])
+            return ModelResponse(parts=[TextPart("Analysis complete")])
+
+        data = DataSources(create_context(source_ids=["credit_cards"]), "1", "1")
+        with patch.dict(os.environ, {"AGENT_TOOL_RETRIES": "1"}):
+            result = await execute_plan(
+                "How uncertain is average PAT per customer?",
+                ExecutionPlan.model_validate(
+                    executable_plan(
+                        "1",
+                        "sql_python",
+                        declared=True,
+                        output_contract={
+                            "required_columns": {
+                                "customer_id": {"type": "string"},
+                                "pat": {"type": "numeric"},
+                            },
+                            "grain": ["customer_id"],
+                            "population": {
+                                "table": "cc_customers",
+                                "source_key": "customer_id",
+                                "result_key": "customer_id",
+                            },
+                        },
+                    )
+                ),
+                data,
+                FunctionModel(respond),
+            )
+        self.assertEqual(len(result.queries), 1)
+        self.assertEqual(len(result.python_runs), 1)
+        output = result.python_runs[0]["output"]
+        self.assertEqual(output["mean"], Decimal("17.264"))
+        self.assertLess(output["lower"], output["mean"])
+        self.assertGreater(output["upper"], output["mean"])
+
     async def test_smartwealth_bootstrap_uses_complete_authorized_sql_rows(self):
         contract = {
             "required_columns": {

@@ -1,5 +1,6 @@
 {
   "module": "scientific",
+  "api_contract": "Only functions listed in operations exist; this module is not scipy or numpy. There is no scientific.mean. For exact monetary means use sum(values)/len(values) on original Decimal values. All operation results are plain dictionaries: access the exact top-level keys in returns. There is no nested confidence_interval or method_metadata; bootstrap bounds are result['lower'] and result['upper'], metadata is result['method'].",
   "execution": "Generated Python stays in Monty. Approved numerical calls execute in a separate CPython SciPy worker. No arbitrary Python callbacks, code strings, SQL, files or network APIs are exposed.",
   "numeric_policy": "Scientific operations convert numeric inputs to float64, except integer sampling indices/counts. Keep original SQL Decimal values for accounting totals and monetary cluster averages; use returned labels/indices to calculate these exactly in Monty. Results include method, RNG and library-version metadata.",
   "randomness": "Each call uses an independent Generator(PCG64) initialized from SeedSequence([seed, stream]). Use different stream values for independent batches; retrying the same seed/stream repeats draws. NumPy draws differ from Python random even with the same seed.",
@@ -9,6 +10,7 @@
       "description": "SciPy kmeans2 on a finite rectangular matrix. Returns labels in input order, centroids, counts, convergence and method metadata. Standardization uses population standard deviation and ignores constant dimensions. Farthest-first initialization starts with the first input row; sort observations by the required entity ID first. Fewer distinct profiles produce fewer clusters. Monetary averages should be recomputed from original Decimal rows using labels."
     },
     "bootstrap": {
+      "returns": {"estimate": "float", "lower": "float", "upper": "float", "standard_error": "float", "bootstrap_distribution": "list[float]", "method": "dict[str, Any]"},
       "signature": "bootstrap(values: list[Number], *, statistic: str = 'mean', n_resamples: int = 1000, confidence_level: float = 0.95, method: str = 'percentile', quantile_method: str = 'nearest_rank', seed: int = 42, stream: int = 0) -> dict[str, Any]",
       "description": "SciPy bootstrap for mean, median, sum or population std. Returns estimate, lower/upper confidence bounds, standard error, bootstrap distribution and method metadata. Nearest-rank bounds use inverted-CDF quantiles and require percentile method; basic/BCa require quantile_method='linear'. Inspect warnings and degeneracy."
     },

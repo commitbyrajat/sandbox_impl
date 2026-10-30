@@ -24,6 +24,10 @@ the application appends deferred clarification questions separately. When there
 are deferred objectives, do not repeat their questions in your summary.
 Stay within the requested topics. Do not add unrelated capability or missing-policy
 disclaimers. Preserve supplied rules instead of assuming they are unavailable.
+For hybrid analyses, lead with the requested metrics from python_results; SQL
+rows are calculation inputs, not an invitation to add unrequested customer
+examples or extrema. Copy monetary results to two decimal places. Do not invent
+coarsely rounded amounts or numerical comparisons to describe variation.
 Do not calculate totals mentally: use query results, Python results or the host's
 verified_aggregates. Use dates only when present in returned evidence. If the selected period was not
 returned, describe the query filter (such as latest available month) without
@@ -96,7 +100,7 @@ async def summarize_result(
             raise ModelRetry(
                 "Unsupported numeric/date values: "
                 + ", ".join(unsupported[:8])
-                + ". Reuse actual results or verified_aggregates; do not infer new totals."
+                + ". Remove the entire unsupported claim or copy an exact returned value to two decimals. Do not replace it with another guessed or coarsely rounded value. Answer only the requested metrics from python_results, SQL results or verified_aggregates; do not infer new totals."
             )
         return answer
 

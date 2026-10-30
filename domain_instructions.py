@@ -34,6 +34,21 @@ class JoinMeaning(BaseModel):
     aggregation_rules: list[str] = Field(default_factory=list)
 
 
+class QuestionGuidance(BaseModel):
+    """Business-owned guidance prioritized for matching questions, without code routing."""
+
+    model_config = ConfigDict(extra="forbid")
+    request_pattern: str
+    planner_instructions: list[str] = Field(default_factory=list)
+    executor_instructions: list[str] = Field(default_factory=list)
+
+    @field_validator("request_pattern")
+    @classmethod
+    def valid_pattern(cls, value):
+        re.compile(value, re.IGNORECASE)
+        return value
+
+
 class DomainProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     description: str = Field(min_length=1)
@@ -52,6 +67,7 @@ class DomainProfile(BaseModel):
     sql_recipes: dict[str, SqlRecipeDefinition] = Field(default_factory=dict)
     python_required_patterns: list[str] = Field(default_factory=list)
     join_semantics: dict[str, JoinMeaning] = Field(default_factory=dict)
+    question_guidance: dict[str, QuestionGuidance] = Field(default_factory=dict)
 
     @field_validator("python_required_patterns")
     @classmethod
@@ -80,6 +96,16 @@ class DomainProfile(BaseModel):
         if stage not in ("classifier", "planner", "executor", "summarizer"):
             raise ValueError("Unknown agent stage")
         return [*self.common_instructions, *getattr(self, f"{stage}_instructions")]
+
+    def focused_guidance(self, question: str, stage: Stage) -> list[str]:
+        if stage not in ("planner", "executor"):
+            return []
+        return [
+            instruction
+            for rule in self.question_guidance.values()
+            if re.search(rule.request_pattern, question, re.IGNORECASE)
+            for instruction in getattr(rule, f"{stage}_instructions")
+        ]
 
 
 class DomainMapping(BaseModel):
