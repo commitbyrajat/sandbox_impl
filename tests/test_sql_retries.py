@@ -438,6 +438,11 @@ FIXED = "SELECT SUM(approved_net_spend_inr) AS spend,SUM(profit_inr) AS profit,S
 
 
 class SQLRetryTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        patcher = patch.dict(os.environ, {"AGENT_TOOL_RETRIES": "3"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def sources(self):
         return DataSources(create_context(source_ids=["credit_cards"]), "1", "1")
 

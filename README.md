@@ -86,6 +86,10 @@ Responsibilities are separated into modules:
 | `model_config.py` | Tenant-selected LiteLLM client configuration |
 | `data_access.py` | Workspace table allowlist, read-only SQL, result storage and source loading |
 | `execution.py` | Ordered execution tools, Monty lifecycle and execution evidence |
+| `scientific_capabilities.json` | Domain-independent scientific signatures, numeric policy and RNG semantics supplied before code generation |
+| `scientific_models.py` | Pydantic scientific requests, resource settings and Monty import type stubs |
+| `scientific_bridge.py` | Allowlisted async Monty module and supervised CPython worker lifecycle |
+| `scientific_worker.py` | Trusted SciPy/NumPy numerical operations and structured results |
 | `sql_diagnostics.py` | SQLGlot preflight, engine result types, query fingerprints and repair diagnostics |
 | `sql_joins.py` | Relationship keys bound to configured business meaning and grain rules |
 | `result_contracts.py` | SQL output aliases/types, unique observation grain and population checks before step completion |
@@ -619,9 +623,108 @@ The summary must attribute fields using executed SQL, rather than guessed column
 
 For a hybrid plan, the host retrieves complete authorized query results and passes their typed rows into Monty as `data[result_id]`. The Monty worker performs only the generated Python calculation. It has no database connection, filesystem mount, query callback, DataFusion/PyArrow object or native DataFusion import. Python outputs return to the host and become evidence for the final summarizer. Tests verify that `import datafusion` fails inside Monty, while SQL succeeds in the host.
 
-SQL returns at most 200 rows with an explicit truncation flag. Python accepts selected `result_ids` only after SQL has run; it rejects unknown IDs and truncated results. Its `data` input maps result IDs to their typed rows, so dates and Decimal amounts survive the boundary. For example, `sum(row['value'] for row in data['query_1'])` processes a prior SQL result. Each invocation uses a fresh Monty worker checkout with a 32 MB heap and a five-second execution budget. No host functions, filesystem mounts, network access, or database credentials are exposed to generated Python. DataFusion runs outside Monty's resource limits; use the supplied small datasets.
+SQL returns at most 200 rows with an explicit truncation flag. Python accepts selected `result_ids` only after SQL has run; it rejects unknown IDs and truncated results. Its `data` input maps result IDs to their typed rows, so dates and Decimal amounts survive the boundary. For example, `sum(row['value'] for row in data['query_1'])` processes a prior SQL result. Each invocation uses a fresh Monty checkout with a 32 MB heap and a five-second interpreter execution budget. The approved scientific module is the only host-function bridge. Generated Python receives no filesystem mounts, network APIs or database credentials. SciPy runs in a separate supervised worker with independent limits. DataFusion also runs outside Monty's resource limits; use the supplied small datasets.
 
 PostgreSQL snapshots refresh after classification and planning at the start of each applicable question. Schema and query results are sent to the configured LiteLLM model as context. LiteLLM must expose the model IDs declared in the tenant mapping. The CLI returns a clear error if a model or selected database is unavailable.
+
+### SciPy calculations through Monty
+
+Generated code imports the allowlisted **`scientific` module** and awaits its
+functions. Scientific algorithms execute in a separate CPython worker; Monty
+retains the generated code, complete authorized input rows and custom business
+calculations. Direct `import scipy` or `import numpy` inside Monty remains
+unsupported. The application process does not import the scientific libraries.
+
+```text
+SQL contracts → typed data[result_id] → Monty
+                                        ↕ approved async numerical calls
+                                  SciPy/NumPy worker
+```
+
+`scientific_capabilities.json` supplies signatures and policies to planning and
+code generation. Both workspaces use the same domain-independent operations:
+
+| Operation | Implementation and output |
+| --- | --- |
+| `await scientific.kmeans(matrix, clusters=3)` | SciPy `kmeans2`; population scaling, farthest-first or k-means++ initialization, labels in input order, centroids, counts and convergence |
+| `await scientific.bootstrap(values)` | SciPy bootstrap for mean/median/sum/population std; confidence bounds and bootstrap distribution |
+| `await scientific.sample("normal", {"loc": 0, "scale": 1}, size=1000)` | Batched SciPy draws for general Monte Carlo calculations; supports normal, uniform, binomial and Bernoulli |
+| `await scientific.binomial(10, 0.5, size=1000)` | Binomial draws plus theoretical mean/variance |
+| `await scientific.bernoulli(0.5, size=1000)` | Coin flips (0/1) with the requested success probability |
+| `await scientific.resample_indices(n, n_resamples=1000)` | NumPy index samples with replacement, for custom statistics on original Decimal rows |
+| `await scientific.monte_carlo_test(values)` | SciPy Monte Carlo hypothesis test; statistic, p-value and null distribution |
+
+General Monte Carlo outcome simulations use `sample`; a hypothesis-test p-value
+does not answer a portfolio-loss distribution question. For example, probabilities
+for several cohorts can be passed as `{"p": probabilities}` with
+`size=[1000, len(probabilities)]` to obtain one batched Bernoulli simulation matrix.
+Monty can apply the resulting 0/1 defaults to original Decimal exposures/LGD.
+
+Example generated clustering code:
+
+```python
+import scientific
+from decimal import Decimal
+
+rows = sorted(data["query_1"], key=lambda row: row["customer_id"])
+columns = ["spend_per_card", "profit_per_card", "opex_per_card"]
+out = await scientific.kmeans(
+    [[row[name] for name in columns] for row in rows],
+    clusters=3, standardize=True, initialization="farthest_first", seed=42,
+)
+groups = []
+for label in sorted(set(out["labels"])):
+    members = [row for row, assigned in zip(rows, out["labels"]) if assigned == label]
+    groups.append({
+        "segment": label + 1,
+        "members": [row["customer_id"] for row in members],
+        "count": len(members),
+        "typical_values": {
+            name: sum((row[name] for row in members), Decimal("0")) / len(members)
+            for name in columns
+        },
+    })
+{"groups": groups, "method": out["method"], "warnings": out["warnings"]}
+```
+
+The column aliases must match the actual SQL output contract. Scientific arrays
+and interval calculations use `float64`; original SQL amounts stay Decimal for
+accounting totals, observed monetary means and cluster monetary averages.
+Custom exact-decimal resampling can use `resample_indices` and calculate the
+statistic in Monty. Do not pass sandbox lambdas, functions or code strings into
+the worker; the approved statistic names select trusted host functions.
+
+Each call uses `Generator(PCG64)` with `SeedSequence([seed, stream])`. The defaults
+are seed 42 and stream 0. Identical seed/stream inputs reproduce draws; use
+different streams for independent batches. These draws differ from Python
+`random`, even with seed 42. The pinned worker libraries are NumPy **2.5.4** and
+SciPy **1.18.1**. Results and `SCIENTIFIC_RESULT` trace events include actual
+versions, RNG and method parameters. New seeded results need not match older
+handwritten algorithms bit for bit.
+
+Bootstrap defaults are 1000 resamples, a 95% percentile interval and exact
+nearest-rank indices (24/974 for 1000 resamples). SciPy basic/BCa intervals require
+`quantile_method="linear"`; these methods are explicit choices, not silent
+replacements. Empty/degenerate input, fewer distinct clustering profiles and
+non-convergence must be disclosed using actual returned results/warnings.
+
+Defaults in `.env.example` bound callbacks to 64 suspensions per Monty checkout,
+30 seconds per scientific call, 120 seconds accumulated scientific execution per
+request, 512 MiB monitored worker RSS, 250000 array cells, 20000000 work units,
+10000 observations/resamples, 500 clustering iterations and 4 MB wire messages.
+Scientific imports and calls consume suspensions, so batch sampling instead of
+calling once per draw. The RSS supervisor checks every 25 ms and terminates an
+over-budget worker; transient overshoot is possible. Linux additionally enforces
+a virtual-address-space ceiling of four times the RSS budget (at least 1 GiB) to
+allow native-library mappings. Monty's heap/time limits do not cover SciPy.
+
+The numerical worker receives validated numeric requests over JSON, a minimal
+environment with no LLM/database credentials, and a fixed operation allowlist.
+It never evaluates generated Python. Timeout/cancellation kills the worker;
+a later call can start a fresh process. Failures become normal Python-tool
+correction feedback. Unawaited scientific results are rejected. SQL-only plans
+do not create Monty or scientific workers; hybrid plans start the numerical
+worker lazily on their first scientific call.
 
 Run the local integration tests with PostgreSQL running (no LLM/API key required):
 
@@ -644,11 +747,11 @@ intent = asyncio.run(classify_question("Which AMC has the largest holdings?", te
 intent, plan = asyncio.run(plan_question("Which AMC has the largest holdings?", tenant_id="2", workspace_id="2"))
 ```
 
-Before sandbox execution, Python preparation checks unresolved global names, including names used inside lambdas, comprehensions and helper functions. A missing `Decimal` import is supplied from the sandbox-native `decimal` module. Other undefined names cause a correction request naming the missing identifiers. Replacing the host-provided `data` with copied literal rows is rejected; deriving a local view from the supplied input remains supported. Each snippet must define its helpers and import supported modules; sandbox suspensions and external host callbacks remain disabled.
+Before sandbox execution, Python preparation checks unresolved global names, including names used inside lambdas, comprehensions and helper functions. A missing `Decimal` import is supplied from the sandbox-native `decimal` module. Other undefined names cause a correction request naming the missing identifiers. Replacing the host-provided `data` with copied literal rows is rejected; deriving a local view from the supplied input remains supported. Each snippet must define its helpers and import supported modules; only the allowlisted scientific module can issue external callbacks. Its imports and calls consume a bounded suspension allowance; all scientific functions must be awaited.
 
 Python calculation results must be structured, non-null values read from stored SQL inputs. A final `print(result)` is normalized to return `result`. Copied input rows are rejected when code does not read `data`; a null result leaves the calculation step pending for correction. Summarization requires the completed Python results, preventing printed-only output from triggering unsupported-number retries.
 
-Adjacent Python plan steps are consolidated before publication, preserving their requested outputs in one calculation. Related statistics should reuse intermediate values. Within one request, identical normalized Python code on identical stored SQL inputs reuses its successful result; `PYTHON REUSED` records identify the original step without repeating the code or invoking Monty. Separate requests have separate caches. Failed calculations remain retryable.
+Adjacent Python plan steps are consolidated before publication, preserving their requested outputs in one calculation. Related statistics should reuse intermediate values. Within one request, identical normalized Python code on identical stored SQL inputs and the same scientific library/settings fingerprint reuses its successful result; `PYTHON REUSED` records identify the original step without repeating the code or invoking Monty. Separate requests have separate caches. Failed calculations remain retryable.
 
 ## Execution-mode analysis of recent financial questions
 

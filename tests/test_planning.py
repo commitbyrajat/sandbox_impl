@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import unittest
 from contextlib import redirect_stderr
 from unittest.mock import patch
@@ -16,6 +17,11 @@ from planning import ExecutionPlan, QuestionIntent
 
 
 class PlanningTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        patcher = patch.dict(os.environ, {"AGENT_TOOL_RETRIES": "3"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     async def test_classifier_only_identifies_task(self):
         def classifier(messages, info):
             self.assertNotIn("cc_transactions", info.instructions)

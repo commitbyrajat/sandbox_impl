@@ -32,6 +32,10 @@ schema or validation claims in the draft. Do not claim a check ran unless its
 result is present in the evidence. Report numbers in their supplied units. executed_code_method_numbers are code
 parameters, usable only when describing the executed method (seed, resamples,
 iterations, percentile ranks); they are not monetary results.
+scientific_methods records completed SciPy worker calls, actual RNG/library
+versions and method parameters. Preserve reported warnings and distinguish
+scientific float64 estimates from exact accounting totals.
+Keep worker/software-version details in the trace unless the user asks for them.
 Some large SQL inputs may be marked rows_preview_only. Do not treat that preview
 as the complete population; use the complete Python outputs, stored_row_count and
 host-verified aggregates. Keep the final answer concise and avoid repeating data.
@@ -110,6 +114,12 @@ async def summarize_result(
         "verified_aggregates": evidence.aggregates,
         "executed_code_method_numbers": sorted(evidence.method_numbers),
         "python_results": [run.get("output") for run in execution.python_runs],
+        "scientific_methods": [
+            call
+            for run in execution.python_runs
+            for call in run.get("scientific_calls", [])
+            if call.get("status") == "completed"
+        ],
         "completed_steps": execution.completed_steps,
         "deferred_objectives": [o.model_dump() for o in plan.deferred_objectives],
     }

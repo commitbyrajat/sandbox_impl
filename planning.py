@@ -19,6 +19,7 @@ from domain_instructions import domain_context, get_domain_profile
 from query_recipes import SqlRecipeCall, match_sql_recipe
 from runtime import model_settings
 from result_contracts import SQLResultContract, validate_contract_sources
+from scientific_models import scientific_catalog
 
 
 class Objective(BaseModel):
@@ -261,6 +262,13 @@ explain why querying the data is sufficient or why a separate calculation is
 needed. For sql_python, python_reason must name the calculation, its inputs and
 why SQL alone is insufficient. Publish the choice before execution, including
 the Python step when needed. The planner owns this decision, not the user.
+The scientific module provides SciPy k-means, bootstrap, distribution sampling,
+binomial/Bernoulli draws, resampling indices and Monte Carlo hypothesis tests.
+Prefer these library operations to handwritten algorithms when they serve the
+question. Publish initialization, confidence/quantile method, seed and library RNG
+choices; NumPy seeded draws differ from Python random. Domain assumptions remain
+in workspace guidance. Monte Carlo simulations use sampled outcomes; do not
+substitute a Monte Carlo hypothesis test for an outcome distribution.
 Batch related Python calculations on the same SQL inputs into one step and one
 structured result. Reuse intermediate calculations; do not create separate steps
 for a statistic already calculated by the main algorithm. Avoid redundant SQL
@@ -413,6 +421,8 @@ async def build_plan(
             + domain_context(key, tenant_id=tenant_key, stage="planner")
             + "\nWorkspace catalog:\n"
             + routing_catalog(key, tenant_id=tenant_key)
+            + "\nAvailable scientific capabilities:\n"
+            + json.dumps(scientific_catalog(include_limits=True))
         ),
         retries=3,
         model_settings=model_settings(),

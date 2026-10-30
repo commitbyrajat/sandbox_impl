@@ -34,8 +34,18 @@ class SummaryEvidence:
     aggregates: list[dict[str, Any]] = field(default_factory=list)
     requested_percentages: set[Decimal] = field(default_factory=set)
     method_numbers: set[Decimal] = field(default_factory=set)
+    method_percentages: set[Decimal] = field(default_factory=set)
 
     def collect(self, value: Any) -> None:
+        if (
+            isinstance(value, dict)
+            and "library_api" in value
+            and "scipy_version" in value
+            and "rng" in value
+        ):
+            # Scientific provenance is collected from host audit records below,
+            # and must not make seeds/iteration counts valid monetary results.
+            return
         if isinstance(value, (date, datetime)):
             day = value.isoformat()[:10]
         elif isinstance(value, str) and re.fullmatch(
@@ -87,7 +97,10 @@ class SummaryEvidence:
         text = re.sub(
             r"(\d+(?:\.\d+)?)\s*%",
             lambda match: (
-                " " if numeric(match[1]) in self.requested_percentages else match[0]
+                " "
+                if numeric(match[1])
+                in self.requested_percentages | self.method_percentages
+                else match[0]
             ),
             text,
         )
@@ -170,6 +183,17 @@ def prepare_evidence(
             )
     for run in execution.python_runs:
         evidence.collect(run.get("output"))
+        for call in run.get("scientific_calls", []):
+            if call.get("status") != "completed":
+                continue
+            method = call.get("method", {})
+            for value in method.values():
+                number = numeric(value)
+                if number is not None:
+                    evidence.method_numbers.add(number)
+            confidence = numeric(method.get("confidence_level_pct"))
+            if confidence is not None:
+                evidence.method_percentages.add(confidence)
         try:
             tree = ast.parse(run.get("code", ""))
         except SyntaxError:
