@@ -9,10 +9,17 @@ from datafusion import SessionContext, SQLOptions
 from sqlglot import exp
 from sqlglot.optimizer.scope import traverse_scope
 
-from datasource_mapping import (RequestScope, SourceId, TenantId, WorkspaceId,
-                                resolve_scope, tables_for)
+from datasource_mapping import (
+    RequestScope,
+    SourceId,
+    TenantId,
+    WorkspaceId,
+    resolve_scope,
+    tables_for,
+)
 from main import create_context
 from planning import ExecutionPlan
+from result_contracts import SQLResultContract, validate_result_contract
 
 MAX_ROWS = 200
 
@@ -24,6 +31,7 @@ class DataSources:
     workspace_id: WorkspaceId
     queries: list[str] = field(default_factory=list)
     results: dict[str, dict[str, Any]] = field(default_factory=dict)
+    next_result_number: int = 1
 
     def __post_init__(self):
         scope = resolve_scope(self.tenant_id, self.workspace_id)
@@ -39,6 +47,7 @@ class DataSources:
         return tables_for(self.selected_sources, definitions=scope.workspace.sources)
 
     def describe(self) -> dict[str, Any]:
+        self.validate_registry_schema()
         return {
             name: [
                 {"name": f.name, "type": str(f.type)}
@@ -47,7 +56,27 @@ class DataSources:
             for name in self.tables
         }
 
-    def query(self, statement: str) -> dict[str, Any]:
+    def validate_registry_schema(self) -> None:
+        """Prevent stale registry columns/types from driving query generation."""
+        scope = resolve_scope(self.tenant_id, self.workspace_id)
+        for source in scope.workspace.sources.values():
+            for name in source.tables:
+                actual = self.context.table(name).schema()
+                declared = source.columns.get(name)
+                if declared is None or set(declared) != set(actual.names):
+                    raise ValueError(
+                        f"datasource.json schema mismatch for {name}: refresh its column names and types"
+                    )
+                for field in actual:
+                    spec = declared[field.name]
+                    if spec.type != str(field.type) or spec.nullable != field.nullable:
+                        raise ValueError(
+                            f"datasource.json schema mismatch for {name}.{field.name}: registry={spec.type}, actual={field.type}; refresh the schema catalog"
+                        )
+
+    def query(
+        self, statement: str, *, contract: SQLResultContract | None = None
+    ) -> dict[str, Any]:
         """Read only routed tables, resolving CTEs by scope to prevent name bypasses."""
         if len(statement) > 20_000:
             raise ValueError("SQL must be at most 20,000 characters")
@@ -75,19 +104,33 @@ class DataSources:
         )
         frame = self.context.sql(statement, options=options)
         rows = frame.limit(MAX_ROWS + 1).to_pylist()
-        result_id = f"query_{len(self.results) + 1}"
+        result_id = f"query_{self.next_result_number}"
+        schema = frame.schema()
         result = {
             "result_id": result_id,
             "columns": frame.schema().names,
             "rows": rows[:MAX_ROWS],
             "truncated": len(rows) > MAX_ROWS,
+            "column_types": [
+                {"name": f.name, "type": str(f.type), "nullable": f.nullable}
+                for f in schema
+            ],
         }
+        if contract is not None:
+            validate_result_contract(
+                contract,
+                result,
+                schema,
+                self.context,
+                {name: self.context.table(name).schema() for name in self.tables},
+            )
         if len(json.dumps(result, default=str)) > 24_000:
             raise ValueError(
                 "Result too large. Aggregate or select fewer columns/rows in SQL"
             )
         self.queries.append(statement)
         self.results[result_id] = result
+        self.next_result_number += 1
         return result
 
     def python_inputs(self, result_ids: list[str]) -> dict[str, Any]:

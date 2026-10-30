@@ -8,21 +8,31 @@ import json
 import symtable
 import sys
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimits
 from pydantic_ai.models import Model
+from pydantic_ai.tools import ToolDefinition
 from pydantic_monty import AsyncMonty, CollectString, MontyError
 
 from data_access import DataSources
-from datasource_mapping import routing_catalog
+from datasource_mapping import resolve_scope, routing_catalog
 from domain_instructions import domain_context, get_domain_profile
 from model_config import configured_model
 from planning import ExecutionPlan
 from query_recipes import render_sql_recipe
+from result_contracts import ResultContractError
 from runtime import model_settings, result_preview, tool_retry_limit, trace
+from sql_diagnostics import (
+    SQLDiagnostic,
+    SQLPreflightError,
+    preflight_sql,
+    sql_diagnostic,
+    sql_fingerprint,
+)
+from sql_joins import configured_joins
 
 INSTRUCTIONS = """
 Implement the supplied execution plan in order, then return a compact execution
@@ -42,6 +52,29 @@ authoritative: column names suggested by the plan are provisional. Replace guess
 identifiers with actual schema names before querying. Generate DataFusion SQL;
 PostgreSQL source tables are snapshots, not a PostgreSQL SQL execution engine.
 For a calendar date use CAST(timestamp_column AS DATE), not DATE(...).
+Every SQL proposal is checked with SQLGlot and then compiled by DataFusion.
+Use preflight issues, visible CTE projections and configured join business meanings
+to revise the failed query. Repeating rejected SQL does not execute it again.
+Use complete relationship keys from datasource.json and the business grain and
+aggregation rules from domain_instructions.json. Matching names/types do not
+establish a relationship. Review warnings for computed join lineage; configured
+cardinality is base-grain guidance, not proof of final result cardinality.
+Carry required measures and join keys through every CTE; a latest-key/date lookup
+does not expose fact measures unless they are selected or joined back correctly.
+Each SQL step must satisfy its published output_contract before completion.
+A preliminary lookup is insufficient for a step requiring complete observations.
+Use column names and Arrow types from datasource.json, verified by describe_sources
+against the loaded data, before generating any SQL. Schema drift stops execution.
+Registry Arrow decimal128(p,s) maps to SQL DECIMAL(p,s), string/string_view to
+VARCHAR, date32 to DATE, timestamp to TIMESTAMP (retain source timezone semantics),
+integer to an appropriate SQL integer type, and bool to BOOLEAN. Do not use Arrow
+type spellings as SQL cast syntax. DataFusion owns computed result precision.
+Python input_steps identify SQL producers. Use the host's current input catalog,
+actual result IDs, exact column aliases and types; never replace the supplied data.
+If SQL inputs are semantically inadequate, request_sql_repair can reopen an input
+producer with a concrete reason, at most twice. Its published contract remains
+unchanged; old dependent results are invalidated. Ordinary code/alias mistakes
+must be corrected in Python using the existing input catalog.
 Always obtain SQL evidence
 with run_sql before answering. SQL handles retrieval, filtering, joins, aggregates,
 rankings and all calculations it reasonably supports. Never invent query results.
@@ -181,6 +214,14 @@ class Dependencies:
     python_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
     python_runs: list[dict[str, Any]] = field(default_factory=list)
     completed_steps: list[str] = field(default_factory=list)
+    sql_schemas: dict[str, Any] | None = None
+    failed_sql: dict[tuple[str, str], SQLDiagnostic] = field(default_factory=dict)
+    last_sql_diagnostic: SQLDiagnostic | None = None
+    sql_attempts: dict[str, int] = field(default_factory=dict)
+    sql_step_results: dict[str, str] = field(default_factory=dict)
+    sql_step_statements: dict[str, str] = field(default_factory=dict)
+    input_repairs: int = 0
+    last_python_error: str | None = None
 
 
 @dataclass
@@ -198,6 +239,14 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
             "No executor needed for a clarification or unsupported question"
         )
     retries = tool_retry_limit()
+    workspace = resolve_scope(plan.tenant_id, plan.workspace_id).workspace
+    profile = get_domain_profile(plan.workspace_id, tenant_id=plan.tenant_id)
+    bindings = configured_joins(
+        {key: workspace.sources[key] for key in plan.sources}, profile.join_semantics
+    )
+    contract_plan = all(
+        step.output_contract is not None for step in plan.steps if step.action == "sql"
+    )
     trace(f"EXECUTION tool retries: {retries} per tool (excluding the initial attempt)")
     agent = Agent(
         (
@@ -220,6 +269,108 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
         retries={"tools": retries, "output": 3},
         model_settings=model_settings(),
     )
+
+    @agent.instructions
+    def sql_correction_state(ctx: RunContext[Dependencies]) -> str:
+        index = len(ctx.deps.completed_steps)
+        state = {
+            "completed_steps": ctx.deps.completed_steps,
+            "next_step": (
+                plan.steps[index].model_dump() if index < len(plan.steps) else None
+            ),
+        }
+        state["sql_inputs"] = {
+            result_id: {
+                "producer_step": step_id,
+                "columns": ctx.deps.sources.results[result_id]["columns"],
+                "column_types": ctx.deps.sources.results[result_id].get(
+                    "column_types", []
+                ),
+                "python_types": {
+                    name: sorted(
+                        {
+                            type(row[name]).__module__ + "." + type(row[name]).__name__
+                            for row in ctx.deps.sources.results[result_id]["rows"]
+                            if row.get(name) is not None
+                        }
+                    )
+                    for name in ctx.deps.sources.results[result_id]["columns"]
+                },
+                "row_count": len(ctx.deps.sources.results[result_id]["rows"]),
+                "rows_preview": ctx.deps.sources.results[result_id]["rows"][:2],
+                "access": f"data[{result_id!r}]",
+            }
+            for step_id, result_id in ctx.deps.sql_step_results.items()
+            if result_id in ctx.deps.sources.results
+        }
+        state["input_repairs_used"] = ctx.deps.input_repairs
+        if ctx.deps.last_python_error:
+            state["python_correction"] = ctx.deps.last_python_error
+        if ctx.deps.last_sql_diagnostic is not None:
+            state["sql_correction"] = ctx.deps.last_sql_diagnostic.model_dump(
+                exclude={"failed_sql", "referenced_base_column_types"}
+            )
+        return (
+            "Current host SQL execution state (latest correction requirements):\n"
+            + json.dumps(state, default=str)
+        )
+
+    def prepare_active_tool(
+        ctx: RunContext[Dependencies], tool: ToolDefinition
+    ) -> ToolDefinition | None:
+        index = len(ctx.deps.completed_steps)
+        if index >= len(plan.steps):
+            return None
+        expected = plan.steps[index]
+        if tool.name == "request_sql_repair":
+            return (
+                tool
+                if contract_plan
+                and expected.action == "python"
+                and ctx.deps.input_repairs < 2
+                else None
+            )
+        if not contract_plan:  # Compatibility for existing manually constructed plans.
+            return tool
+        name = {"schema": "describe_sources", "sql": "run_sql", "python": "run_python"}[
+            expected.action
+        ]
+        if tool.name != name:
+            return None
+        if expected.action == "sql":
+            guidance = (
+                "\nCurrent SQL step output contract: "
+                + expected.output_contract.model_dump_json()
+            )
+            if ctx.deps.last_sql_diagnostic is not None:
+                diagnostic = ctx.deps.last_sql_diagnostic
+                guidance += (
+                    "\nCorrect the previous proposal before calling again: "
+                    + diagnostic.error
+                )
+                guidance += "\n" + "\n".join(
+                    issue.reference + ": " + issue.repair for issue in diagnostic.issues
+                )
+            return replace(tool, description=(tool.description or "") + guidance)
+        return tool
+
+    def sql_schemas(ctx):
+        if ctx.deps.sql_schemas is None:
+            ctx.deps.sql_schemas = {
+                name: ctx.deps.sources.context.table(name).schema()
+                for name in ctx.deps.sources.tables
+            }
+        return ctx.deps.sql_schemas
+
+    def reject_sql(ctx, step_id, diagnostic):
+        ctx.deps.last_sql_diagnostic = diagnostic
+        if diagnostic.cacheable:
+            ctx.deps.failed_sql[(step_id, diagnostic.fingerprint)] = diagnostic
+        trace(
+            "SQL_REJECTED: "
+            + json.dumps({"step_id": step_id, **diagnostic.model_dump()}, default=str)
+        )
+        raise ModelRetry(diagnostic.model_dump_json())
 
     def enforce_workspace(ctx: RunContext[Dependencies]) -> None:
         if (ctx.deps.sources.tenant_id, ctx.deps.sources.workspace_id) != (
@@ -269,16 +420,22 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
             )
         return answer
 
-    @agent.tool(sequential=True)
+    @agent.tool(sequential=True, prepare=prepare_active_tool)
     def describe_sources(ctx: RunContext[Dependencies], step_id: str) -> dict[str, Any]:
         """Describe tables and column types from only the selected sources."""
         enforce_step(ctx, step_id, "schema")
         trace(f"TOOL describe_sources: {step_id}")
         result = ctx.deps.sources.describe()
+        result["_sql_guidance"] = {
+            "schema_source": "datasource.json; column names, types and nullability verified against the loaded workspace before SQL generation",
+            "registry_verified": True,
+            "relationships": [key.model_dump() for key in bindings],
+            "type_authority": "Use source Arrow types for initial SQL generation. SQLGlot inferred types are advisory; DataFusion result_schema is authoritative for computed values supplied to Monty.",
+        }
         ctx.deps.completed_steps.append(step_id)
         return result
 
-    @agent.tool(sequential=True)
+    @agent.tool(sequential=True, prepare=prepare_active_tool)
     async def run_sql(
         ctx: RunContext[Dependencies], step_id: str, statement: str
     ) -> str:
@@ -289,33 +446,167 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
             statement: One SELECT query, optionally with CTEs.
         """
         enforce_step(ctx, step_id, "sql")
-        trace(f"TOOL run_sql: {step_id} started")
+        attempt = ctx.deps.sql_attempts.get(step_id, 0) + 1
+        ctx.deps.sql_attempts[step_id] = attempt
+        fingerprint = sql_fingerprint(statement)
+        trace(
+            f"TOOL run_sql: {step_id} started; attempt={attempt}; fingerprint={fingerprint[:16]}"
+        )
+        cached = ctx.deps.failed_sql.get((step_id, fingerprint))
+        if cached is not None:
+            diagnostic = cached.model_copy(
+                update={
+                    "attempt": attempt,
+                    "repeated_failed_statement": True,
+                    "failed_sql": statement,
+                }
+            )
+            trace(
+                f"TOOL run_sql: {step_id} unchanged rejected SQL; preflight/compilation skipped"
+            )
+            reject_sql(ctx, step_id, diagnostic)
+        schemas = sql_schemas(ctx)
         try:
-            result = await asyncio.to_thread(ctx.deps.sources.query, statement)
+            checked = await asyncio.to_thread(
+                preflight_sql, statement, schemas, ctx.deps.sources.context, bindings
+            )
+        except SQLPreflightError as error:
+            diagnostic = error.diagnostic.model_copy(update={"attempt": attempt})
+            trace(
+                f"TOOL run_sql: {step_id} failed preflight ({diagnostic.phase}): {diagnostic.error[:1000]}"
+            )
+            if diagnostic.phase == "configuration":
+                raise ValueError(diagnostic.error) from error
+            reject_sql(ctx, step_id, diagnostic)
+        try:
+            step = plan.steps[len(ctx.deps.completed_steps)]
+            if step.output_contract is None:
+                result = await asyncio.to_thread(ctx.deps.sources.query, statement)
+            else:
+                result = await asyncio.to_thread(
+                    ctx.deps.sources.query, statement, contract=step.output_contract
+                )
+            ctx.deps.last_sql_diagnostic = None
+            ctx.deps.sql_step_results[step_id] = result["result_id"]
+            ctx.deps.sql_step_statements[step_id] = statement
             ctx.deps.completed_steps.append(step_id)
             trace(
                 f'TOOL run_sql: {step_id} completed; {len(result["rows"])} stored rows'
+            )
+            trace(
+                "SQL_ACCEPTED: "
+                + json.dumps(
+                    {
+                        "step_id": step_id,
+                        "result_id": result["result_id"],
+                        "statement": statement,
+                        "row_count": len(result["rows"]),
+                        "columns": result["columns"],
+                        "column_types": result.get("column_types", []),
+                    }
+                )
             )
             view = (
                 result_preview(result)
                 if plan.execution_mode == "sql_python"
                 else result
             )
-            return json.dumps(view, default=str)
+            return json.dumps(
+                {**view, "sql_validation": checked.model_dump()}, default=str
+            )
         except Exception as exc:
             trace(f"TOOL run_sql: {step_id} failed: {str(exc)[:1000]}")
-            feedback = str(exc)[:2000]
-            if "Invalid comparison operation: Decimal" in feedback:
-                feedback += (
-                    " Cast BOTH compared expressions to the same precision and scale, "
-                    "for example CAST(expression AS DECIMAL(38,6)), including aggregate/window "
-                    "expressions. Changing only one operand or repeating the query will not fix it."
+            diagnostic = sql_diagnostic(
+                statement,
+                str(exc),
+                schemas,
+                phase=(
+                    "result_contract"
+                    if isinstance(exc, ResultContractError)
+                    else "execution"
+                ),
+                cacheable=isinstance(exc, ResultContractError),
+                bindings=bindings,
+            )
+            if isinstance(exc, ResultContractError):
+                diagnostic.repair_instructions.append(
+                    "Return the complete planned dataset; a date-only lookup cannot complete this step. Required output contract: "
+                    + step.output_contract.model_dump_json()
                 )
-            raise ModelRetry(f"SQL failed: {feedback}") from exc
+            diagnostic.attempt = attempt
+            reject_sql(ctx, step_id, diagnostic)
 
     if plan.execution_mode == "sql_python":
 
-        @agent.tool(sequential=True)
+        @agent.tool(sequential=True, prepare=prepare_active_tool)
+        def request_sql_repair(
+            ctx: RunContext[Dependencies], sql_step_id: str, reason: str
+        ) -> str:
+            """Reopen an inadequate SQL input, invalidate dependent evidence, and regenerate it.
+
+            Args:
+                sql_step_id: SQL producer ID listed in the pending Python step's input_steps.
+                reason: Specific input defect that requires a SQL correction rather than a Python alias fix.
+            """
+            enforce_workspace(ctx)
+            index = len(ctx.deps.completed_steps)
+            if index >= len(plan.steps) or plan.steps[index].action != "python":
+                raise ModelRetry(
+                    "SQL input repair is available only while a Python step is pending"
+                )
+            expected = plan.steps[index]
+            if ctx.deps.input_repairs >= 2:
+                raise ModelRetry(
+                    "SQL input repair limit (2) reached; correct Python or report the limitation"
+                )
+            if (
+                sql_step_id not in expected.input_steps
+                or sql_step_id not in ctx.deps.sql_step_results
+                or not reason.strip()
+            ):
+                raise ModelRetry(
+                    "Name a completed SQL producer in input_steps and supply the specific input defect"
+                )
+            start = next(
+                i for i, step in enumerate(plan.steps) if step.step_id == sql_step_id
+            )
+            invalidated_steps = [step.step_id for step in plan.steps[start:]]
+            removed = []
+            for key in invalidated_steps:
+                result_id = ctx.deps.sql_step_results.pop(key, None)
+                if result_id:
+                    ctx.deps.sources.results.pop(result_id, None)
+                    removed.append(result_id)
+                statement = ctx.deps.sql_step_statements.pop(key, None)
+                if statement is not None:
+                    ctx.deps.sources.queries.remove(statement)
+            ctx.deps.completed_steps = ctx.deps.completed_steps[:start]
+            ctx.deps.python_runs = [
+                run
+                for run in ctx.deps.python_runs
+                if run["step_id"] not in invalidated_steps
+            ]
+            ctx.deps.python_cache.clear()
+            ctx.deps.last_python_error = None
+            ctx.deps.last_sql_diagnostic = None
+            ctx.deps.input_repairs += 1
+            trace(
+                f"TOOL request_sql_repair: reopened {sql_step_id}; invalidated {removed}; repair {ctx.deps.input_repairs}/2: {reason}"
+            )
+            return json.dumps(
+                {
+                    "reopened_step": sql_step_id,
+                    "invalidated_result_ids": removed,
+                    "reason": reason,
+                    "output_contract": (
+                        plan.steps[start].output_contract.model_dump()
+                        if plan.steps[start].output_contract
+                        else None
+                    ),
+                }
+            )
+
+        @agent.tool(sequential=True, prepare=prepare_active_tool)
         async def run_python(
             ctx: RunContext[Dependencies],
             step_id: str,
@@ -335,6 +626,15 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                 raise ModelRetry("Keep Python code under 20,000 characters")
             try:
                 code = prepare_python(code)
+                current = plan.steps[len(ctx.deps.completed_steps)]
+                if current.input_steps:
+                    expected_ids = {
+                        ctx.deps.sql_step_results[key] for key in current.input_steps
+                    }
+                    if set(result_ids) != expected_ids:
+                        raise ValueError(
+                            f"Use exactly the current SQL producer result IDs: {sorted(expected_ids)}"
+                        )
                 inputs = ctx.deps.sources.python_inputs(result_ids)
                 fingerprint = hashlib.sha256(
                     (
@@ -345,6 +645,7 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                 ).hexdigest()
                 cached = ctx.deps.python_cache.get(fingerprint)
                 if cached is not None:
+                    ctx.deps.last_python_error = None
                     ctx.deps.python_runs.append(
                         {
                             "step_id": step_id,
@@ -399,11 +700,24 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                 }
                 ctx.deps.python_runs.append(record)
                 ctx.deps.python_cache[fingerprint] = record
+                ctx.deps.last_python_error = None
                 ctx.deps.completed_steps.append(step_id)
                 trace(f"TOOL run_python: {step_id} completed")
                 return payload
             except (MontyError, ValueError, TypeError, RuntimeError) as exc:
                 trace(f"TOOL run_python: {step_id} failed: {str(exc)[:1000]}")
+                trace(
+                    "PYTHON_REJECTED: "
+                    + json.dumps(
+                        {
+                            "step_id": step_id,
+                            "code": code,
+                            "result_ids": result_ids,
+                            "error": str(exc),
+                        },
+                        default=str,
+                    )
+                )
                 feedback = str(exc)[:2000]
                 if "suspend" in feedback or "suspension" in feedback:
                     feedback += (
@@ -423,6 +737,7 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                     + " Keep completed SQL results; do not rerun SQL or replace host data."
                     + " Bind a local rows variable from data[result_id]."
                 )
+                ctx.deps.last_python_error = feedback
                 raise ModelRetry(f"Python execution failed: {feedback}") from exc
 
     return agent

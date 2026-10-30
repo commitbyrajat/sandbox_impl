@@ -36,7 +36,18 @@ class BusinessPlanningTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("sql", submitted_question.lower())
             self.assertIn("Choose the implementation automatically", info.instructions)
             self.assertIn("largest-first greedy assignment", info.instructions)
-            plan = executable_plan("2", "sql_python")
+            plan = executable_plan(
+                "2",
+                "sql_python",
+                declared=True,
+                output_contract={
+                    "required_columns": {
+                        "amc_name": {"type": "string"},
+                        "value": {"type": "numeric"},
+                    },
+                    "grain": ["amc_name"],
+                },
+            )
             plan["execution_reason"] = (
                 "Balancing review groups requires repeated assignments after totaling AMC holdings."
             )

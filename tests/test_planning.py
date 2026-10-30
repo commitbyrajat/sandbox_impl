@@ -67,7 +67,7 @@ class PlanningTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 prompt["classified_intent"]["objective"], "Count card transactions"
             )
-            return structured_response(info, executable_plan())
+            return structured_response(info, executable_plan(declared=True))
 
         with patch("data_access.create_context") as loader:
             intent, plan = await plan_question(
@@ -90,7 +90,7 @@ class PlanningTests(unittest.IsolatedAsyncioTestCase):
             )
 
         def planner(messages, info):
-            return structured_response(info, executable_plan())
+            return structured_response(info, executable_plan(declared=True))
 
         def executor(messages, info):
             index = len(calls)

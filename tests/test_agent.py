@@ -6,8 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from pydantic_ai.messages import (ModelResponse, TextPart, ToolCallPart,
-                                  ToolReturnPart)
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_monty import AsyncMonty, MontyRuntimeError
 from test_support import ask
@@ -97,7 +96,10 @@ class SandboxTests(unittest.IsolatedAsyncioTestCase):
                     await session.feed_run("open('/etc/passwd').read()")
 
     async def test_question_classification_routing_and_sql_answer(self):
-        classifier = classifier_for(["credit_cards"])
+        classifier = classifier_for(
+            ["credit_cards"],
+            output_contract={"required_columns": {"cards": {"type": "integer"}}},
+        )
 
         def model(messages, info):
             self.assertNotIn("run_python", [tool.name for tool in info.function_tools])
@@ -133,11 +135,42 @@ class SandboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1,000", answer)
 
     async def test_sql_then_python_calculation(self):
-        classifier = classifier_for(["smartwealth"], mode="sql_python")
+        classifier = classifier_for(
+            ["smartwealth"],
+            mode="sql_python",
+            output_contract={
+                "required_columns": {
+                    "customer_id": {"type": "integer"},
+                    "value": {"type": "numeric"},
+                },
+                "grain": ["customer_id"],
+            },
+        )
 
         def model(messages, info):
-            self.assertIn("run_python", [tool.name for tool in info.function_tools])
             returns = tool_returns(messages)
+            expected_tool = (
+                "describe_sources"
+                if not returns
+                else {"describe_sources": "run_sql", "run_sql": "run_python"}.get(
+                    returns[-1].tool_name
+                )
+            )
+            self.assertEqual(
+                {tool.name for tool in info.function_tools},
+                (
+                    (
+                        {expected_tool}
+                        | (
+                            {"request_sql_repair"}
+                            if expected_tool == "run_python"
+                            else set()
+                        )
+                    )
+                    if expected_tool
+                    else set()
+                ),
+            )
             if not returns:
                 return ModelResponse(
                     parts=[ToolCallPart("describe_sources", {"step_id": "s1"})]
@@ -226,7 +259,7 @@ class SandboxTests(unittest.IsolatedAsyncioTestCase):
                 )
             if returns[-1].tool_name == "describe_sources":
                 self.assertEqual(
-                    set(returns[-1].content),
+                    set(returns[-1].content) - {"_sql_guidance"},
                     set(
                         DataSources(
                             create_context(source_ids=["credit_cards"]),
@@ -423,7 +456,9 @@ def structured_response(info, payload):
     return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, payload)])
 
 
-def executable_plan(workspace_id="1", mode="sql"):
+def executable_plan(
+    workspace_id="1", mode="sql", *, declared=False, output_contract=None
+):
     steps = [
         {
             "step_id": "s1",
@@ -438,6 +473,10 @@ def executable_plan(workspace_id="1", mode="sql"):
             "expected_output": "Complete typed metric rows",
         },
     ]
+    if declared:
+        steps[1]["output_contract"] = output_contract or {
+            "required_columns": {"n": {"type": "integer"}}
+        }
     if mode == "sql_python":
         steps.append(
             {
@@ -445,6 +484,7 @@ def executable_plan(workspace_id="1", mode="sql"):
                 "action": "python",
                 "instruction": "Apply the custom calculation to SQL results",
                 "expected_output": "Calculated summary",
+                "input_steps": ["s2"],
             }
         )
     return {
@@ -465,7 +505,7 @@ def executable_plan(workspace_id="1", mode="sql"):
     }
 
 
-def classifier_for(sources, mode="sql"):
+def classifier_for(sources, mode="sql", *, output_contract=None):
     # One deterministic test model can serve the isolated classifier and planner.
     def model(messages, info):
         if "objective" in info.output_tools[0].parameters_json_schema["properties"]:
@@ -481,6 +521,8 @@ def classifier_for(sources, mode="sql"):
             executable_plan(
                 "1" if sources == ["credit_cards"] else "2",
                 mode,
+                declared=True,
+                output_contract=output_contract,
             ),
         )
 

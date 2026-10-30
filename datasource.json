@@ -47,7 +47,541 @@
                 "Risk cohorts are synthetic aggregate transition observations, not account-level trajectories or audited provision movements.",
                 "Monthly financials now include ENR/ANR split, balance-based transactor/revolve shares, calibrated annual revolve yield, PBT, synthetic tax and PAT. Flat-cost PAT and COF/yield/transactor-share NIM sensitivities have different assumptions; follow the explicit question.",
                 "transactor_share_pct_pt_change is an absolute percentage-point change: +5 adds 0.05 to transactor_share at fixed total ANR. The tax fixture assumes 25% with loss benefits recognized; it is not statutory tax guidance."
-              ]
+              ],
+              "relationship_keys": {
+                "card_customer": {
+                  "left_table": "cc_credit_cards",
+                  "right_table": "cc_customers",
+                  "column_pairs": [
+                    [
+                      "customer_id",
+                      "customer_id"
+                    ]
+                  ]
+                },
+                "transaction_card": {
+                  "left_table": "cc_transactions",
+                  "right_table": "cc_credit_cards",
+                  "column_pairs": [
+                    [
+                      "card_id",
+                      "card_id"
+                    ]
+                  ]
+                },
+                "transaction_customer": {
+                  "left_table": "cc_transactions",
+                  "right_table": "cc_customers",
+                  "column_pairs": [
+                    [
+                      "customer_id",
+                      "customer_id"
+                    ]
+                  ]
+                },
+                "profile_card": {
+                  "left_table": "cc_card_profiles",
+                  "right_table": "cc_credit_cards",
+                  "column_pairs": [
+                    [
+                      "card_id",
+                      "card_id"
+                    ]
+                  ]
+                },
+                "profile_customer": {
+                  "left_table": "cc_card_profiles",
+                  "right_table": "cc_customers",
+                  "column_pairs": [
+                    [
+                      "customer_id",
+                      "customer_id"
+                    ]
+                  ]
+                },
+                "profile_product": {
+                  "left_table": "cc_card_profiles",
+                  "right_table": "cc_products",
+                  "column_pairs": [
+                    [
+                      "variant_id",
+                      "variant_id"
+                    ]
+                  ]
+                },
+                "financial_profile": {
+                  "left_table": "cc_monthly_financials",
+                  "right_table": "cc_card_profiles",
+                  "column_pairs": [
+                    [
+                      "card_id",
+                      "card_id"
+                    ]
+                  ]
+                },
+                "financial_card": {
+                  "left_table": "cc_monthly_financials",
+                  "right_table": "cc_credit_cards",
+                  "column_pairs": [
+                    [
+                      "card_id",
+                      "card_id"
+                    ]
+                  ]
+                },
+                "risk_transition": {
+                  "left_table": "cc_delinquency_monthly",
+                  "right_table": "cc_roll_rates_monthly",
+                  "column_pairs": [
+                    [
+                      "month",
+                      "month"
+                    ],
+                    [
+                      "variant_id",
+                      "variant_id"
+                    ],
+                    [
+                      "segment",
+                      "segment"
+                    ],
+                    [
+                      "currency",
+                      "currency"
+                    ],
+                    [
+                      "dpd_bucket",
+                      "from_bucket"
+                    ]
+                  ]
+                }
+              },
+              "columns": {
+                "cc_customers": {
+                  "customer_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "full_name": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "email": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "city": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "country": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "joined_date": {
+                    "type": "date32[day]",
+                    "nullable": true
+                  }
+                },
+                "cc_credit_cards": {
+                  "card_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "customer_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "card_last_four": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "network": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "card_tier": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "issuing_bank": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "billing_currency": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "credit_limit": {
+                    "type": "decimal128(12, 2)",
+                    "nullable": true
+                  },
+                  "issued_date": {
+                    "type": "date32[day]",
+                    "nullable": true
+                  },
+                  "expiry_date": {
+                    "type": "date32[day]",
+                    "nullable": true
+                  },
+                  "card_status": {
+                    "type": "string_view",
+                    "nullable": true
+                  }
+                },
+                "cc_transactions": {
+                  "transaction_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "customer_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "card_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "transaction_timestamp": {
+                    "type": "timestamp[us, tz=UTC]",
+                    "nullable": true
+                  },
+                  "merchant_name": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "merchant_category": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "merchant_country": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "amount": {
+                    "type": "decimal128(12, 2)",
+                    "nullable": true
+                  },
+                  "currency": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "transaction_type": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "status": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "channel": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "original_transaction_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "decline_reason": {
+                    "type": "string_view",
+                    "nullable": true
+                  }
+                },
+                "cc_products": {
+                  "variant_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "variant_name": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "annual_interest_rate": {
+                    "type": "decimal128(2, 2)",
+                    "nullable": true
+                  },
+                  "annual_funding_rate": {
+                    "type": "decimal128(3, 3)",
+                    "nullable": true
+                  },
+                  "annual_credit_cost_rate": {
+                    "type": "decimal128(3, 3)",
+                    "nullable": true
+                  },
+                  "monthly_fee_inr": {
+                    "type": "decimal128(3, 0)",
+                    "nullable": true
+                  },
+                  "fixed_opex_per_card_inr": {
+                    "type": "decimal128(4, 0)",
+                    "nullable": true
+                  },
+                  "interchange_rate": {
+                    "type": "decimal128(3, 3)",
+                    "nullable": true
+                  },
+                  "rewards_rate": {
+                    "type": "decimal128(3, 3)",
+                    "nullable": true
+                  },
+                  "variable_opex_rate": {
+                    "type": "decimal128(3, 3)",
+                    "nullable": true
+                  },
+                  "network_cost_rate": {
+                    "type": "decimal128(3, 3)",
+                    "nullable": true
+                  },
+                  "loss_given_default": {
+                    "type": "decimal128(2, 2)",
+                    "nullable": true
+                  },
+                  "transactor_share": {
+                    "type": "decimal128(2, 2)",
+                    "nullable": true
+                  },
+                  "tax_rate": {
+                    "type": "decimal128(2, 2)",
+                    "nullable": true
+                  }
+                },
+                "cc_card_profiles": {
+                  "card_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "customer_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "variant_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "segment": {
+                    "type": "string_view",
+                    "nullable": true
+                  }
+                },
+                "cc_monthly_financials": {
+                  "month": {
+                    "type": "date32[day]",
+                    "nullable": true
+                  },
+                  "card_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "currency": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "days_in_period": {
+                    "type": "int64",
+                    "nullable": true
+                  },
+                  "day_count_basis": {
+                    "type": "int64",
+                    "nullable": true
+                  },
+                  "approved_net_spend_inr": {
+                    "type": "decimal128(7, 2)",
+                    "nullable": true
+                  },
+                  "average_receivables_inr": {
+                    "type": "decimal128(8, 2)",
+                    "nullable": true
+                  },
+                  "funded_balance_inr": {
+                    "type": "decimal128(8, 2)",
+                    "nullable": true
+                  },
+                  "annual_funding_rate": {
+                    "type": "decimal128(3, 3)",
+                    "nullable": true
+                  },
+                  "annual_credit_cost_rate": {
+                    "type": "decimal128(6, 6)",
+                    "nullable": true
+                  },
+                  "interest_income_inr": {
+                    "type": "decimal128(6, 2)",
+                    "nullable": true
+                  },
+                  "fee_income_inr": {
+                    "type": "decimal128(3, 0)",
+                    "nullable": true
+                  },
+                  "interchange_income_inr": {
+                    "type": "decimal128(5, 2)",
+                    "nullable": true
+                  },
+                  "funding_cost_inr": {
+                    "type": "decimal128(5, 2)",
+                    "nullable": true
+                  },
+                  "fixed_opex_inr": {
+                    "type": "decimal128(4, 0)",
+                    "nullable": true
+                  },
+                  "variable_opex_inr": {
+                    "type": "decimal128(5, 2)",
+                    "nullable": true
+                  },
+                  "rewards_cost_inr": {
+                    "type": "decimal128(6, 2)",
+                    "nullable": true
+                  },
+                  "network_cost_inr": {
+                    "type": "decimal128(4, 2)",
+                    "nullable": true
+                  },
+                  "credit_cost_inr": {
+                    "type": "decimal128(6, 2)",
+                    "nullable": true
+                  },
+                  "total_revenue_inr": {
+                    "type": "decimal128(6, 2)",
+                    "nullable": true
+                  },
+                  "opex_inr": {
+                    "type": "decimal128(6, 2)",
+                    "nullable": true
+                  },
+                  "total_cost_inr": {
+                    "type": "decimal128(6, 2)",
+                    "nullable": true
+                  },
+                  "profit_inr": {
+                    "type": "decimal128(6, 2)",
+                    "nullable": true
+                  },
+                  "ending_net_receivables_inr": {
+                    "type": "decimal128(8, 2)",
+                    "nullable": true
+                  },
+                  "average_net_receivables_inr": {
+                    "type": "decimal128(8, 2)",
+                    "nullable": true
+                  },
+                  "transactor_share": {
+                    "type": "decimal128(2, 2)",
+                    "nullable": true
+                  },
+                  "revolve_rate": {
+                    "type": "decimal128(2, 2)",
+                    "nullable": true
+                  },
+                  "revolving_enr_inr": {
+                    "type": "decimal128(9, 4)",
+                    "nullable": true
+                  },
+                  "revolving_anr_inr": {
+                    "type": "decimal128(9, 4)",
+                    "nullable": true
+                  },
+                  "transactor_anr_inr": {
+                    "type": "decimal128(9, 4)",
+                    "nullable": true
+                  },
+                  "annual_revolve_yield": {
+                    "type": "decimal128(8, 8)",
+                    "nullable": true
+                  },
+                  "tax_rate": {
+                    "type": "decimal128(2, 2)",
+                    "nullable": true
+                  },
+                  "tax_loss_benefit_recognized": {
+                    "type": "bool",
+                    "nullable": true
+                  },
+                  "pbt_inr": {
+                    "type": "decimal128(6, 2)",
+                    "nullable": true
+                  },
+                  "tax_expense_inr": {
+                    "type": "decimal128(6, 2)",
+                    "nullable": true
+                  },
+                  "pat_inr": {
+                    "type": "decimal128(6, 2)",
+                    "nullable": true
+                  },
+                  "spend_linked_revenue_inr": {
+                    "type": "decimal128(5, 2)",
+                    "nullable": true
+                  },
+                  "spend_linked_cost_inr": {
+                    "type": "decimal128(6, 2)",
+                    "nullable": true
+                  }
+                },
+                "cc_delinquency_monthly": {
+                  "month": {
+                    "type": "date32[day]",
+                    "nullable": true
+                  },
+                  "variant_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "segment": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "currency": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "dpd_bucket": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "balance_inr": {
+                    "type": "decimal128(8, 2)",
+                    "nullable": true
+                  },
+                  "loss_given_default": {
+                    "type": "decimal128(2, 2)",
+                    "nullable": true
+                  }
+                },
+                "cc_roll_rates_monthly": {
+                  "month": {
+                    "type": "date32[day]",
+                    "nullable": true
+                  },
+                  "variant_id": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "segment": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "currency": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "from_bucket": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "to_bucket": {
+                    "type": "string_view",
+                    "nullable": true
+                  },
+                  "cohort_opening_balance_inr": {
+                    "type": "decimal128(8, 2)",
+                    "nullable": true
+                  },
+                  "transitioned_balance_inr": {
+                    "type": "decimal128(8, 2)",
+                    "nullable": true
+                  }
+                }
+              }
             }
           },
           "domain_profile": "credit_cards"
@@ -84,7 +618,281 @@
                 "sw_holdings.scheme_id = sw_schemes.scheme_id",
                 "sw_holdings.amc_id = sw_amcs.amc_id"
               ],
-              "notes": []
+              "notes": [],
+              "relationship_keys": {
+                "folio_customer": {
+                  "left_table": "sw_folios",
+                  "right_table": "sw_customers",
+                  "column_pairs": [
+                    [
+                      "customer_id",
+                      "customer_id"
+                    ]
+                  ]
+                },
+                "folio_amc": {
+                  "left_table": "sw_folios",
+                  "right_table": "sw_amcs",
+                  "column_pairs": [
+                    [
+                      "amc_id",
+                      "amc_id"
+                    ]
+                  ]
+                },
+                "scheme_amc": {
+                  "left_table": "sw_schemes",
+                  "right_table": "sw_amcs",
+                  "column_pairs": [
+                    [
+                      "amc_id",
+                      "amc_id"
+                    ]
+                  ]
+                },
+                "transaction_folio": {
+                  "left_table": "sw_transactions",
+                  "right_table": "sw_folios",
+                  "column_pairs": [
+                    [
+                      "folio_id",
+                      "folio_id"
+                    ]
+                  ]
+                },
+                "transaction_scheme": {
+                  "left_table": "sw_transactions",
+                  "right_table": "sw_schemes",
+                  "column_pairs": [
+                    [
+                      "scheme_id",
+                      "scheme_id"
+                    ]
+                  ]
+                },
+                "holding_customer": {
+                  "left_table": "sw_holdings",
+                  "right_table": "sw_customers",
+                  "column_pairs": [
+                    [
+                      "customer_id",
+                      "customer_id"
+                    ]
+                  ]
+                },
+                "holding_folio": {
+                  "left_table": "sw_holdings",
+                  "right_table": "sw_folios",
+                  "column_pairs": [
+                    [
+                      "folio_id",
+                      "folio_id"
+                    ]
+                  ]
+                },
+                "holding_scheme": {
+                  "left_table": "sw_holdings",
+                  "right_table": "sw_schemes",
+                  "column_pairs": [
+                    [
+                      "scheme_id",
+                      "scheme_id"
+                    ]
+                  ]
+                },
+                "holding_amc": {
+                  "left_table": "sw_holdings",
+                  "right_table": "sw_amcs",
+                  "column_pairs": [
+                    [
+                      "amc_id",
+                      "amc_id"
+                    ]
+                  ]
+                }
+              },
+              "columns": {
+                "sw_customers": {
+                  "customer_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "full_name": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "email": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "city": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "risk_profile": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "joined_on": {
+                    "type": "date32[day]",
+                    "nullable": true
+                  }
+                },
+                "sw_amcs": {
+                  "amc_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "amc_name": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "sw_schemes": {
+                  "scheme_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "amc_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "scheme_name": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "category": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "plan": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "option": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "currency": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "latest_nav": {
+                    "type": "decimal128(14, 4)",
+                    "nullable": true
+                  },
+                  "nav_date": {
+                    "type": "date32[day]",
+                    "nullable": true
+                  }
+                },
+                "sw_folios": {
+                  "folio_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "customer_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "amc_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "folio_number": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "opened_on": {
+                    "type": "date32[day]",
+                    "nullable": true
+                  },
+                  "holding_mode": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "sw_transactions": {
+                  "transaction_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "folio_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "scheme_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "amc_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "transaction_date": {
+                    "type": "date32[day]",
+                    "nullable": true
+                  },
+                  "transaction_type": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "units": {
+                    "type": "decimal128(18, 6)",
+                    "nullable": true
+                  },
+                  "nav": {
+                    "type": "decimal128(14, 4)",
+                    "nullable": true
+                  },
+                  "amount": {
+                    "type": "decimal128(18, 2)",
+                    "nullable": true
+                  },
+                  "status": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "sw_holdings": {
+                  "customer_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "folio_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "scheme_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "amc_id": {
+                    "type": "int32",
+                    "nullable": true
+                  },
+                  "units": {
+                    "type": "decimal128(38, 6)",
+                    "nullable": true
+                  },
+                  "net_invested_amount": {
+                    "type": "decimal128(38, 6)",
+                    "nullable": true
+                  },
+                  "latest_nav": {
+                    "type": "decimal128(14, 4)",
+                    "nullable": true
+                  },
+                  "nav_date": {
+                    "type": "date32[day]",
+                    "nullable": true
+                  },
+                  "market_value": {
+                    "type": "decimal128(38, 6)",
+                    "nullable": true
+                  }
+                }
+              }
             }
           },
           "domain_profile": "smartwealth"

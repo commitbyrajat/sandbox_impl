@@ -191,7 +191,135 @@
         "(?s)(?=.*credit.loss)(?=.*(?:5%|95th|95%))(?=.*(?:scenario|range|exceed|simulat)).+",
         "(?s)(?=.*\\bcustomers?\\b)(?=.*\\breview groups?\\b)(?=.*(?:equal|balanc)).+",
         "(?s)(?=.*\\bcustomers?\\b)(?=.*\\bsegments?\\b)(?=.*\\bsimilar\\b)(?=.*profitability).+"
-      ]
+      ],
+      "join_semantics": {
+        "card_customer": {
+          "meaning": "Cards belong to registered customers; a customer may own multiple cards.",
+          "left_grain": [
+            "card_id"
+          ],
+          "right_grain": [
+            "customer_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "Keep registered customers when zero-spend customers are required. Use distinct card IDs as the per-card denominator."
+          ]
+        },
+        "transaction_card": {
+          "meaning": "Each card transaction is attributed to its issued card.",
+          "left_grain": [
+            "transaction_id"
+          ],
+          "right_grain": [
+            "card_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "Filter transaction status and currency before aggregation. Aggregate transaction measures before combining with repeated monthly financial facts."
+          ]
+        },
+        "transaction_customer": {
+          "meaning": "Each card transaction belongs to its customer.",
+          "left_grain": [
+            "transaction_id"
+          ],
+          "right_grain": [
+            "customer_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "Preserve registered customers with no matching transactions when the question requires all customers."
+          ]
+        },
+        "profile_card": {
+          "meaning": "A card has one analytical profile carrying segment and product attributes.",
+          "left_grain": [
+            "card_id"
+          ],
+          "right_grain": [
+            "card_id"
+          ],
+          "cardinality": "one_to_one",
+          "aggregation_rules": []
+        },
+        "profile_customer": {
+          "meaning": "Card analytical profiles relate cards to their owning customer.",
+          "left_grain": [
+            "card_id"
+          ],
+          "right_grain": [
+            "customer_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "A customer can have several profiles through different cards; profiles are not customer-grain facts."
+          ]
+        },
+        "profile_product": {
+          "meaning": "The analytical product variant is assigned through the card profile.",
+          "left_grain": [
+            "card_id"
+          ],
+          "right_grain": [
+            "variant_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "Raw network and tier labels are not analytical product variant names."
+          ]
+        },
+        "financial_profile": {
+          "meaning": "Monthly financial facts acquire segment and variant attributes through the card profile.",
+          "left_grain": [
+            "month",
+            "card_id"
+          ],
+          "right_grain": [
+            "card_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "Select the requested month or period before customer aggregation. Preserve card-month measures; count distinct cards for per-card metrics. Do not sum repeated facts after joining another repeated-key fact source."
+          ]
+        },
+        "financial_card": {
+          "meaning": "Each monthly financial observation belongs to one issued card and reaches its customer through that card.",
+          "left_grain": [
+            "month",
+            "card_id"
+          ],
+          "right_grain": [
+            "card_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "Customer analysis aggregates selected financial facts per customer. Use a distinct-card denominator and preserve required customers without financial facts."
+          ]
+        },
+        "risk_transition": {
+          "meaning": "A delinquency origin exposure cohort has several observed destination transitions in the same monthly cohort.",
+          "left_grain": [
+            "month",
+            "variant_id",
+            "segment",
+            "currency",
+            "dpd_bucket"
+          ],
+          "right_grain": [
+            "month",
+            "variant_id",
+            "segment",
+            "currency",
+            "from_bucket",
+            "to_bucket"
+          ],
+          "cardinality": "one_to_many",
+          "aggregation_rules": [
+            "Use every origin-cohort key, matching dpd_bucket to from_bucket. Do not sum a repeated opening cohort balance across destination rows. Aggregate or filter destination transitions before combining origin exposures."
+          ]
+        }
+      }
     },
     "smartwealth": {
       "description": "SmartWealth mutual fund customers, asset management companies, schemes, folios and holdings.",
@@ -265,7 +393,126 @@
         "first_nav_date",
         "last_nav_date"
       ],
-      "policy_absence_pattern": "\\bno\\s+(?:[\\w/-]+\\s+){0,6}(?:polic(?:y|ies)|rules?)\\b|\\b(?:polic(?:y|ies)|rules?)\\s+(?:are\\s+)?not\\s+(?:configured|available|provided)\\b"
+      "policy_absence_pattern": "\\bno\\s+(?:[\\w/-]+\\s+){0,6}(?:polic(?:y|ies)|rules?)\\b|\\b(?:polic(?:y|ies)|rules?)\\s+(?:are\\s+)?not\\s+(?:configured|available|provided)\\b",
+      "join_semantics": {
+        "folio_customer": {
+          "meaning": "A registered customer can hold several mutual fund folios.",
+          "left_grain": [
+            "folio_id"
+          ],
+          "right_grain": [
+            "customer_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": []
+        },
+        "folio_amc": {
+          "meaning": "Each folio belongs to one Asset Management Company.",
+          "left_grain": [
+            "folio_id"
+          ],
+          "right_grain": [
+            "amc_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": []
+        },
+        "scheme_amc": {
+          "meaning": "Each mutual fund scheme is managed by one Asset Management Company.",
+          "left_grain": [
+            "scheme_id"
+          ],
+          "right_grain": [
+            "amc_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "Scheme-level units and NAVs are not additive across different schemes."
+          ]
+        },
+        "transaction_folio": {
+          "meaning": "A mutual fund transaction is recorded against its folio.",
+          "left_grain": [
+            "transaction_id"
+          ],
+          "right_grain": [
+            "folio_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "Only completed transactions affect holdings; pending and failed transactions remain separate."
+          ]
+        },
+        "transaction_scheme": {
+          "meaning": "A mutual fund transaction concerns one specific scheme.",
+          "left_grain": [
+            "transaction_id"
+          ],
+          "right_grain": [
+            "scheme_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "Aggregate transactions to the required folio/scheme/customer grain before joining current holdings."
+          ]
+        },
+        "holding_customer": {
+          "meaning": "Holding observations belong to their registered customer.",
+          "left_grain": [
+            "folio_id",
+            "scheme_id"
+          ],
+          "right_grain": [
+            "customer_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "Sum market value in INR for customer values; do not sum units or NAV across schemes."
+          ]
+        },
+        "holding_folio": {
+          "meaning": "A folio can contain holdings in several schemes.",
+          "left_grain": [
+            "folio_id",
+            "scheme_id"
+          ],
+          "right_grain": [
+            "folio_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "Distinct folio counts must be counted at the final requested aggregation grain."
+          ]
+        },
+        "holding_scheme": {
+          "meaning": "A holding is valued for its specific mutual fund scheme.",
+          "left_grain": [
+            "folio_id",
+            "scheme_id"
+          ],
+          "right_grain": [
+            "scheme_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "Join on scheme_id. Joining raw holdings to all schemes of the same AMC multiplies market values. Keep the supplied NAV date."
+          ]
+        },
+        "holding_amc": {
+          "meaning": "A holding is attributed to its Asset Management Company.",
+          "left_grain": [
+            "folio_id",
+            "scheme_id"
+          ],
+          "right_grain": [
+            "amc_id"
+          ],
+          "cardinality": "many_to_one",
+          "aggregation_rules": [
+            "AMC holding value is the sum of holding market values. Count distinct schemes and folios at AMC level."
+          ]
+        }
+      }
     }
   }
 }

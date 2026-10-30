@@ -63,7 +63,18 @@ class CompoundQuestionTests(unittest.IsolatedAsyncioTestCase):
             events.append("plan")
             intent = json.loads(messages[-1].parts[0].content)["classified_intent"]
             self.assertEqual(len(intent["objectives"]), 2)
-            plan = executable_plan("2")
+            plan = executable_plan(
+                "2",
+                declared=True,
+                output_contract={
+                    "required_columns": {
+                        "amc_name": {"type": "string"},
+                        "market_value_inr": {"type": "numeric"},
+                        "nav_date": {"type": "date"},
+                    },
+                    "grain": ["amc_name"],
+                },
+            )
             plan["steps"][1][
                 "instruction"
             ] = "Aggregate holding value by AMC with NAV date"

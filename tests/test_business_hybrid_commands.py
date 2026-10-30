@@ -45,7 +45,9 @@ class BusinessHybridCommandTests(unittest.IsolatedAsyncioTestCase):
                     return structured_response(
                         info,
                         executable_plan(
-                            "1", "sql" if len(calls) == 1 else "sql_python"
+                            "1",
+                            "sql" if len(calls) == 1 else "sql_python",
+                            declared=True,
                         ),
                     )
 

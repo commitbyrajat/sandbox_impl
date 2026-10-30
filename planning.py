@@ -8,11 +8,17 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_ai import Agent, ModelRetry, UsageLimits
 from pydantic_ai.models import Model
 
-from datasource_mapping import (SourceId, TenantId, WorkspaceId, get_workspace,
-                                routing_catalog)
+from datasource_mapping import (
+    SourceId,
+    TenantId,
+    WorkspaceId,
+    get_workspace,
+    routing_catalog,
+)
 from domain_instructions import domain_context, get_domain_profile
 from query_recipes import SqlRecipeCall, match_sql_recipe
 from runtime import model_settings
+from result_contracts import SQLResultContract, validate_contract_sources
 
 
 class Objective(BaseModel):
@@ -74,6 +80,8 @@ class ExecutionStep(BaseModel):
     action: Literal["schema", "sql", "python"]
     instruction: str = Field(min_length=1)
     expected_output: str = Field(min_length=1)
+    output_contract: SQLResultContract | None = None
+    input_steps: list[str] = Field(default_factory=list)
 
 
 class ExecutionPlan(BaseModel):
@@ -132,6 +140,18 @@ class ExecutionPlan(BaseModel):
         actions = [step.action for step in self.steps]
         if len(ids) != len(set(ids)):
             raise ValueError("Step IDs must be unique")
+        prior_sql = set()
+        for step in self.steps:
+            if step.output_contract is not None and step.action != "sql":
+                raise ValueError("Only SQL steps declare output_contract")
+            if step.input_steps and (
+                step.action != "python" or set(step.input_steps) - prior_sql
+            ):
+                raise ValueError(
+                    "Python input_steps must reference preceding SQL steps"
+                )
+            if step.action == "sql":
+                prior_sql.add(step.step_id)
         if (
             actions[0] != "schema"
             or actions.count("schema") != 1
@@ -166,6 +186,9 @@ def consolidate_python_steps(plan: ExecutionPlan) -> ExecutionPlan:
                     "expected_output": previous.expected_output
                     + "\n"
                     + step.expected_output,
+                    "input_steps": list(
+                        dict.fromkeys([*previous.input_steps, *step.input_steps])
+                    ),
                 }
             )
         else:
@@ -222,6 +245,8 @@ served in this workspace. Preserve deferred_objectives and their clarification
 questions. An unresolved objective must not block another supported ready objective.
 Select the minimum required sources from this workspace. Do not answer before
 execution. An executable plan must have response null.
+Leave sql_recipe null. Configured recipes are selected by the host before this
+planning call; never invent a recipe ID or template hash. Plan generated SQL steps.
 For execution, the first step must inspect schema (action schema). Then use SQL
 for retrieval, filtering, joins, aggregates, rankings, ratios, window functions
 and supported statistics. Include all required calculations in the steps.
@@ -240,6 +265,16 @@ Batch related Python calculations on the same SQL inputs into one step and one
 structured result. Reuse intermediate calculations; do not create separate steps
 for a statistic already calculated by the main algorithm. Avoid redundant SQL
 materializations: use a CTE/subquery inside the final retrieval where possible.
+Every SQL step MUST declare output_contract with required_columns keyed by exact
+output aliases, coarse types (numeric/string/integer/date/timestamp/boolean/any),
+nullability, meaning, grain (unique non-null observation keys), and applicable
+row-count bounds. Include population {table, source_key, result_key} when ALL
+registered entities must be retained. Use configured registry columns and types.
+For each Python step supply input_steps naming its SQL producers. Those producers
+must return the complete feature/observation datasets, not preliminary date lookups.
+Preserve requested per-unit denominators in the column meanings and SQL instructions.
+Put snapshot lookup queries inside the feature query, or plan a separate SQL step
+with a distinct output contract. Never consume a feature step with a date-only query.
 Use one schema step, at least one SQL step, at most 12 steps. Each step is completed
 by one successful tool call, so split multiple queries into distinct SQL steps.
 List concise validation_checks for the requested results, including completeness,
@@ -387,6 +422,30 @@ async def build_plan(
     def enforce_workspace(plan: ExecutionPlan) -> ExecutionPlan:
         if (plan.tenant_id, plan.workspace_id) != (tenant_key, key):
             raise ModelRetry(f"Use only tenant {tenant_key}, workspace {key}")
+        if plan.sql_recipe is not None:
+            raise ModelRetry(
+                "Set sql_recipe to null. Recipes are selected by the host from configuration before LLM planning; do not invent a recipe ID/hash. Return schema and generated SQL steps so the executor can validate and run the query."
+            )
+        for step in plan.steps:
+            if step.action == "sql" and step.output_contract is None:
+                raise ModelRetry(
+                    f"SQL step {step.step_id} needs output_contract with required_columns, types, grain and applicable population checks before publication"
+                )
+            if step.action == "python" and not step.input_steps:
+                raise ModelRetry(
+                    f"Python step {step.step_id} needs input_steps referencing complete SQL datasets"
+                )
+            if step.output_contract is not None:
+                _, workspace = get_workspace(key, tenant_id=tenant_key)
+                try:
+                    validate_contract_sources(
+                        step.output_contract,
+                        {name: workspace.sources[name] for name in plan.sources},
+                    )
+                except ValueError as error:
+                    raise ModelRetry(
+                        f"SQL step {step.step_id} output contract: {error}"
+                    ) from error
         profile = get_domain_profile(key, tenant_id=tenant_key)
         if any(
             re.search(pattern, question, re.IGNORECASE)

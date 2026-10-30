@@ -86,6 +86,9 @@ Responsibilities are separated into modules:
 | `model_config.py` | Tenant-selected LiteLLM client configuration |
 | `data_access.py` | Workspace table allowlist, read-only SQL, result storage and source loading |
 | `execution.py` | Ordered execution tools, Monty lifecycle and execution evidence |
+| `sql_diagnostics.py` | SQLGlot preflight, engine result types, query fingerprints and repair diagnostics |
+| `sql_joins.py` | Relationship keys bound to configured business meaning and grain rules |
+| `result_contracts.py` | SQL output aliases/types, unique observation grain and population checks before step completion |
 | `summarization.py` | Final domain-aware presentation, requested-topic guards and deferred questions |
 | `summary_evidence.py` | Decimal totals and numeric/date checks against actual execution evidence |
 | `plan_publication.py` | Scoped pre-execution JSON publications |
@@ -164,6 +167,90 @@ increasing retries does not repair code by itself. Python failures return the
 error and stored result columns to the LLM. A `run_sql` retry-limit error after
 a Python failure can mean the model tried to rerun SQL while the Python step was
 pending; `--trace` now reports these rejected out-of-order calls explicitly.
+
+Every LLM-generated `run_sql` proposal follows an enforced preflight loop:
+
+1. SQLGlot parses a copy of the statement and qualifies its columns against the
+   owned workspace's actual Arrow schemas. CTE/subquery projection failures are
+   reported with the visible aliases and missing fields.
+2. Configured join keys are checked through resolvable CTE projections, including
+   every component of compound keys. Wrong keys cannot be justified by matching
+   field names or types. Coarser joins between grouped CTEs are accepted when both
+   inputs expose unique keys at that grain. Computed or opaque lineage remains
+   explicitly unverified.
+3. DataFusion compiles the original SQL without fetching result rows. Its result
+   schema is authoritative about computed types; SQLGlot's inferred types are
+   advisory and can differ in Decimal precision. SQLGlot has no dedicated
+   DataFusion dialect in the installed version, so it does not replace this check.
+4. A failed proposal returns JSON diagnostics through `ModelRetry`, with scope
+   issues, relevant source types and configured join meaning. The pending step
+   and latest correction requirements are refreshed in the model instructions.
+   The LLM generates the revised SQL; the application does not rewrite it.
+5. Retrieved rows must satisfy the SQL step's `output_contract` before they are
+   stored or the step completes. Missing fields, incorrect types, duplicate/null
+   grain keys, row-count violations and configured population mismatches return
+   correction feedback while keeping that SQL step pending.
+
+`datasource.json` also contains `sources.<source_id>.columns.<table>`, with every
+column's Arrow `type` and `nullable` flag for both workspaces. The scoped catalog
+is supplied to the planner and executor before query generation. `describe_sources`
+verifies it against the loaded source schemas; schema drift stops execution with
+an explicit registry mismatch. After changing the datasets, refresh the registry:
+
+```bash
+uv run python scripts/refresh_datasource_schema.py
+```
+
+The refresh inspects all configured sources, so PostgreSQL must be available. Start
+a new agent process after refreshing. Source types describe base columns;
+DataFusion supplies the actual types of aggregated and computed result columns.
+
+New LLM-generated plans require an `output_contract` for every SQL step, including
+`required_columns` (aliases, coarse types, nullability and meanings), `grain`,
+optional row-count bounds and optional `population` (`table`, `source_key`,
+`result_key`). Each Python step declares its SQL producer IDs in `input_steps`.
+A complete customer-feature contract therefore rejects a date-only lookup even
+when that lookup is valid SQL. Preliminary lookups belong inside the feature query
+or in separately planned steps. Existing manually constructed plans can omit
+contracts for compatibility; new generated plans cannot.
+
+For contract-based plans, only the tool for the pending step is advertised. During
+Python, the host supplies current result IDs, exact aliases, Arrow/Python types,
+row counts and a small preview before code generation. Python still executes in
+Monty on the complete stored rows. Code/alias errors return feedback for correction.
+If the SQL inputs need correction, `request_sql_repair` can reopen a declared SQL
+producer at most **twice per request**. It preserves the published contract,
+invalidates downstream results and Python caches, and issues fresh result IDs.
+Stale result IDs cannot be reused after repair.
+
+`datasource.json` supplies machine-readable `relationship_keys`. Each entry has a
+relationship ID, `left_table`, `right_table` and `column_pairs`. The same ID under
+`profiles.<profile_id>.join_semantics` in `domain_instructions.json` supplies its
+`meaning`, `left_grain`, `right_grain`, configured `cardinality` and
+`aggregation_rules`. Both are bound in the schema tool's `_sql_guidance` before
+SQL generation and returned with relevant correction feedback. Existing narrative
+instructions remain in place, and legacy relationship equality strings remain
+supported. Business rules belong in configuration, not domain-specific Python
+branches. Configured cardinality is not an observed uniqueness check or proof
+that a query preserves measures; fan-out/grain warnings must still be reviewed.
+
+Failed deterministic preflight/compilation proposals are fingerprinted per request
+and step. Comments, formatting and unquoted identifier case do not bypass the
+duplicate guard; string literals and quoted identifier case remain significant.
+An unchanged rejected query receives feedback again without repeating preflight
+or DataFusion compilation. Each duplicate still consumes the configured tool
+retry budget. Execution/storage failures are not cached, so transient failures
+can retry unchanged SQL. Separate requests have separate failure histories.
+
+`--trace` records attempt numbers, fingerprints and complete `SQL_REJECTED`
+diagnostics, making repeated errors distinguishable from identical submissions.
+The raw `DataSources.query()` API and configured recipe path retain their existing
+checks; this preflight applies to generated executor tool proposals. The preflight
+does not prove business arithmetic or all join semantics. Population completeness
+is checked separately when declared in the output contract.
+Configured recipes are selected by the host before LLM planning; generated plans
+must leave `sql_recipe` null. Invented recipe IDs/hashes return planner correction
+feedback instead of bypassing the generated-SQL preflight path.
 
 Override the output budget for one run with `--max-tokens` (a positive integer),
 or set `LITELLM_MAX_OUTPUT_TOKENS` in `.env` for the default. Precedence is

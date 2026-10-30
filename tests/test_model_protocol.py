@@ -88,7 +88,7 @@ class ModelProtocolTests(unittest.IsolatedAsyncioTestCase):
                     "objective": "Group customers into segments",
                 }
             else:
-                payload = executable_plan("1", "sql_python")
+                payload = executable_plan("1", "sql_python", declared=True)
             return completion(body, content=json.dumps(payload))
 
         async with mock_provider(respond):
@@ -121,7 +121,7 @@ class ModelProtocolTests(unittest.IsolatedAsyncioTestCase):
             payload = (
                 {"intent": "aggregation", "objective": "Count customers"}
                 if "objective" in properties
-                else executable_plan("2")
+                else executable_plan("2", declared=True)
             )
             return completion(body, call=(function["name"], payload))
 
@@ -158,8 +158,12 @@ class ModelProtocolTests(unittest.IsolatedAsyncioTestCase):
             index = len(requests)
             requests.append(body)
             self.assertEqual(
-                {tool["function"]["name"] for tool in body["tools"]},
-                {"describe_sources", "run_sql", "run_python"},
+                {tool["function"]["name"] for tool in body.get("tools", [])},
+                (
+                    {"describe_sources", "run_sql", "run_python"}
+                    if index < len(actions)
+                    else set()
+                ),
             )
             self.assertNotEqual(
                 body.get("response_format", {}).get("type"), "json_schema"

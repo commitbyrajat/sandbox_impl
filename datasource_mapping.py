@@ -13,13 +13,28 @@ TenantId = str
 WorkspaceId = str
 
 
+class RelationshipKey(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    left_table: str = Field(min_length=1)
+    right_table: str = Field(min_length=1)
+    column_pairs: list[tuple[str, str]] = Field(min_length=1)
+
+
+class ColumnDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: str = Field(min_length=1)
+    nullable: bool = True
+
+
 class SourceDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["parquet", "postgres"]
     location: str
     description: str
     tables: dict[str, str]
+    columns: dict[str, dict[str, ColumnDefinition]] = Field(default_factory=dict)
     relationships: list[str]
+    relationship_keys: dict[str, RelationshipKey] = Field(default_factory=dict)
     notes: list[str]
 
 

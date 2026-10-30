@@ -88,6 +88,19 @@ def publish_plan(
     for step in plan.steps:
         print(f"  {step.step_id} [{step.action}] {step.instruction}", file=sys.stderr)
         print(f"    Expected: {step.expected_output}", file=sys.stderr)
+        if step.output_contract is not None:
+            print(
+                "    Required SQL columns: "
+                + ", ".join(step.output_contract.required_columns),
+                file=sys.stderr,
+            )
+            if step.output_contract.grain:
+                print(
+                    "    Observation grain: " + ", ".join(step.output_contract.grain),
+                    file=sys.stderr,
+                )
+        if step.input_steps:
+            print("    SQL inputs: " + ", ".join(step.input_steps), file=sys.stderr)
     for check in plan.validation_checks:
         print(f"  Check: {check}", file=sys.stderr)
     for objective in plan.deferred_objectives:

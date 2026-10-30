@@ -5,8 +5,7 @@ import re
 from pathlib import Path
 from typing import Literal
 
-from pydantic import (BaseModel, ConfigDict, Field, field_validator,
-                      model_validator)
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from datasource_mapping import resolve_scope
 from query_recipes import SqlRecipeDefinition
@@ -26,6 +25,15 @@ class TopicScope(BaseModel):
         return value
 
 
+class JoinMeaning(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    meaning: str = Field(min_length=1)
+    left_grain: list[str] = Field(min_length=1)
+    right_grain: list[str] = Field(min_length=1)
+    cardinality: Literal["one_to_one", "one_to_many", "many_to_one", "many_to_many"]
+    aggregation_rules: list[str] = Field(default_factory=list)
+
+
 class DomainProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     description: str = Field(min_length=1)
@@ -43,6 +51,7 @@ class DomainProfile(BaseModel):
     summary_partition_fields: list[str] = Field(default_factory=list)
     sql_recipes: dict[str, SqlRecipeDefinition] = Field(default_factory=dict)
     python_required_patterns: list[str] = Field(default_factory=list)
+    join_semantics: dict[str, JoinMeaning] = Field(default_factory=dict)
 
     @field_validator("python_required_patterns")
     @classmethod
@@ -103,6 +112,16 @@ def domain_context(
             "instructions": profile.for_stage(stage),
             "action_policies": profile.action_policies,
             "action_policies_configured": bool(profile.action_policies),
+            **(
+                {
+                    "join_semantics": {
+                        name: rule.model_dump()
+                        for name, rule in profile.join_semantics.items()
+                    }
+                }
+                if stage in ("planner", "executor")
+                else {}
+            ),
         }
     )
 

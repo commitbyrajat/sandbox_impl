@@ -14,8 +14,13 @@ from test_agent import executable_plan, structured_response, tool_returns
 from test_support import ask
 
 from agent import configured_model, plan_question
-from datasource_mapping import (MAPPING, TENANTS, TenantMapping, resolve_scope,
-                                routing_catalog)
+from datasource_mapping import (
+    MAPPING,
+    TENANTS,
+    TenantMapping,
+    resolve_scope,
+    routing_catalog,
+)
 from planning import ExecutionPlan
 
 
@@ -29,7 +34,9 @@ def answering_model(tenant_id, workspace_id, table, count, events):
                     info, {"intent": "aggregation", "objective": "Count customers"}
                 )
             events.append("plan")
-            payload = executable_plan("1" if table.startswith("cc_") else "2")
+            payload = executable_plan(
+                "1" if table.startswith("cc_") else "2", declared=True
+            )
             payload.update(tenant_id=tenant_id, workspace_id=workspace_id)
             return structured_response(info, payload)
         returns = tool_returns(messages)
@@ -134,6 +141,11 @@ class TenantTests(unittest.IsolatedAsyncioTestCase):
             source = workspace.sources["credit_cards"]
             source.location = directory
             source.tables = {"cc_customers": "customers.parquet"}
+            from datasource_mapping import ColumnDefinition
+
+            source.columns = {
+                "cc_customers": {"customer_id": ColumnDefinition(type="string_view")}
+            }
             tenant.workspaces["additional-workspace"] = workspace
             with patch.dict(TENANTS, {"1": tenant}):
                 self.assertEqual(
