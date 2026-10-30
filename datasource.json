@@ -1,7 +1,8 @@
 {
   "models": {
     "qwen-coder": {
-      "model_name": "qwen-coder"
+      "model_name": "qwen-coder",
+      "structured_output_mode": "native"
     },
     "ornith-reasoner": {
       "model_name": "ornith-reasoner"

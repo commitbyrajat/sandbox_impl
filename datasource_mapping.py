@@ -35,6 +35,7 @@ class ModelDefinition(BaseModel):
     model_name: str = Field(min_length=1)
     base_url_env: str = "LITELLM_BASE_URL"
     api_key_env: str = "LITELLM_MASTER_KEY"
+    structured_output_mode: Literal["tool", "native", "prompted"] = "tool"
 
 
 class TenantDefinition(BaseModel):

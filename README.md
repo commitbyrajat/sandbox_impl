@@ -199,6 +199,21 @@ when the local backend shares memory between tenant models.
 
 The separate **`datasource.json`** mapping defines reusable `models`, then `tenants.<tenant_id>.model_id` and `tenants.<tenant_id>.workspaces.<workspace_id>.sources`. The model ID is resolved from the tenant; the exact source definitions come from the owned workspace. Each workspace has a name, a `domain_profile` reference, and source definitions with storage locations, table names and relationships. `datasource_mapping.py` validates it and shares the registry between classification, loading and query enforcement. No credentials are stored in the mapping. Connection settings remain in environment variables.
 
+Each model can set `structured_output_mode` to `tool` (the default), `native`, or
+`prompted`. `qwen-coder` uses `native`: classification and planning send a JSON
+schema in `response_format` and still validate the returned Pydantic models.
+This avoids Ollama's Qwen XML tool-call parser for structured results. Other
+models retain their configured mode; `ornith-reasoner` defaults to `tool`.
+The executor's `describe_sources`, `run_sql` and `run_python` remain function
+tools. Native structured output changes the result format, not how those tools
+execute. See [Pydantic output modes](https://pydantic.dev/docs/ai/core-concepts/output/)
+and [Ollama structured outputs](https://docs.ollama.com/capabilities/structured-outputs).
+
+Provider failures now report the model, HTTP status when available and sanitized
+provider message. An Ollama XML parser error is a model-server failure before
+Pydantic can validate its output; increasing `AGENT_TOOL_RETRIES` does not fix a
+planner HTTP failure. The generic tenant/database hint previously hid that cause.
+
 Domain-specific instructions are configured separately in **`domain_instructions.json`**, under `profiles.<profile_id>`. Each profile contains:
 
 - `description` and `glossary` for interpreting workspace terminology.

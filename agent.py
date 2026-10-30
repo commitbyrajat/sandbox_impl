@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.models import Model
 
 # Public analysis interfaces remain importable; implementations own no CLI state.
@@ -15,7 +15,7 @@ from execution import INSTRUCTIONS, Dependencies, create_agent
 from model_config import configured_model
 from pipeline import Pipeline, PipelineModels, PipelineRequest, PipelineServices
 from planning import ExecutionPlan, QuestionIntent
-from runtime import PipelineModelTimeout
+from runtime import PipelineModelTimeout, model_error_detail
 from summarization import append_clarifications
 
 
@@ -156,7 +156,9 @@ def main() -> None:
         raise SystemExit(1) from None
     except Exception as exc:
         detail = "Check the tenant/workspace IDs, mapped LiteLLM model and database connection."
-        if isinstance(exc, (ValueError, UnexpectedModelBehavior)):
+        if isinstance(exc, ModelAPIError):
+            detail = model_error_detail(exc)
+        elif isinstance(exc, (ValueError, UnexpectedModelBehavior)):
             detail = str(exc)
             if isinstance(exc, UnexpectedModelBehavior):
                 detail += " Use --trace to see stage and tool correction failures."
@@ -166,7 +168,7 @@ def main() -> None:
                         detail += " Last tool error: " + str(exc.__cause__)[:1000]
                 if "token limit" in str(exc).lower():
                     detail += " Set --max-tokens 8192 (or LITELLM_MAX_OUTPUT_TOKENS in .env) to raise the output budget."
-        if "Invalid model name" in str(exc):
+        if not isinstance(exc, ModelAPIError) and "Invalid model name" in str(exc):
             detail = "LiteLLM does not expose the tenant-mapped model; check its /v1/models endpoint."
         print(f"Agent failed ({type(exc).__name__}). {detail}", file=sys.stderr)
         raise SystemExit(1) from None
