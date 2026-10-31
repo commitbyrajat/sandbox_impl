@@ -487,6 +487,9 @@ def executable_plan(
                 "input_steps": ["s2"],
             }
         )
+        if declared:
+            steps[-1]["calculation"] = {"kind": "custom", "method": "test_calculation"}
+            steps[-1]["result_contract"] = {"required_fields": {}, "invariants": []}
     return {
         "tenant_id": workspace_id,
         "workspace_id": workspace_id,

@@ -1,10 +1,13 @@
 """Contract tests for replaceable handlers, evidence handoff and domain summaries."""
 
 import json
+import io
+import os
 import sys
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.function import FunctionModel
@@ -12,10 +15,16 @@ from pydantic_monty import AsyncMonty, MontyRuntimeError
 from test_agent import executable_plan
 
 from execution import ExecutionResult
-from pipeline import (Pipeline, PipelineModels, PipelineRequest,
-                      PipelineServices, PipelineStage)
+from pipeline import (
+    Pipeline,
+    PipelineModels,
+    PipelineRequest,
+    PipelineServices,
+    PipelineStage,
+)
 from planning import ExecutionPlan, QuestionIntent
 from summarization import summarize_result
+from calculation_contracts import CalculationValidationError
 
 
 def adapters(events, *, no_execution=False):
@@ -77,6 +86,85 @@ def adapters(events, *, no_execution=False):
 
 
 class PipelineTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        patcher = patch.dict(os.environ, {"AGENT_SUMMARIZATION_ENABLED": "true"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def test_graph_validates_evidence_before_summary(self):
+        services = adapters([])
+        services.validate = Mock(
+            side_effect=CalculationValidationError("Incomplete evidence")
+        )
+        services.summarize = Mock()
+        with self.assertRaisesRegex(CalculationValidationError, "Incomplete evidence"):
+            await Pipeline(services).run(
+                PipelineRequest("Count customers", "1", "1"),
+                PipelineModels(default=object()),
+            )
+        services.validate.assert_called_once()
+        services.summarize.assert_not_called()
+
+    async def test_disabled_summary_returns_executor_report_without_summary_call(self):
+        events = []
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, {"AGENT_SUMMARIZATION_ENABLED": "false"}),
+            redirect_stderr(output),
+        ):
+            context = await Pipeline(adapters(events)).run(
+                PipelineRequest("How many customers?", "1", "1"),
+                PipelineModels(default=object()),
+            )
+        self.assertEqual(events, ["classify", "plan", "publish", "load", "execute"])
+        self.assertEqual(context.answer, "There are 20 customers.")
+        self.assertEqual(context.skipped_stages, ["summarize"])
+        self.assertNotIn("summarize", context.completed_stages)
+        self.assertIn("STAGE summarize: end (skipped,", output.getvalue())
+        self.assertEqual(context.execution.sql_results["query_1"]["rows"], [{"n": 20}])
+
+    async def test_disabled_summary_preserves_clarifications_and_no_execution_response(
+        self,
+    ):
+        from planning import DeferredObjective
+
+        events = []
+        services = adapters(events)
+        original_plan = services.plan
+
+        async def plan(*args, **kwargs):
+            result = await original_plan(*args, **kwargs)
+            result.deferred_objectives = [
+                DeferredObjective(
+                    objective="Compare periods", clarification="Which period?"
+                )
+            ]
+            return result
+
+        services.plan = plan
+        with patch.dict(os.environ, {"AGENT_SUMMARIZATION_ENABLED": "false"}):
+            context = await Pipeline(services).run(
+                PipelineRequest("Count customers and compare periods", "1", "1"),
+                PipelineModels(default=object()),
+            )
+            no_execution = await Pipeline(adapters([], no_execution=True)).run(
+                PipelineRequest("Count customers in that period", "1", "1"),
+                PipelineModels(default=object()),
+            )
+        self.assertEqual(context.answer, "There are 20 customers.\n\nWhich period?")
+        self.assertEqual(no_execution.answer, "Which period do you mean?")
+        self.assertIsNone(no_execution.execution)
+
+    async def test_invalid_summary_toggle_fails_before_any_stage(self):
+        services = adapters([])
+        services.resolve = Mock()
+        with patch.dict(os.environ, {"AGENT_SUMMARIZATION_ENABLED": "maybe"}):
+            with self.assertRaisesRegex(ValueError, "AGENT_SUMMARIZATION_ENABLED"):
+                await Pipeline(services).run(
+                    PipelineRequest("Count customers", "1", "1")
+                )
+        services.resolve.assert_not_called()
+
     async def test_full_chain_and_final_summary(self):
         events = []
         pipeline = Pipeline(adapters(events))
@@ -93,6 +181,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
                 "publish",
                 "load_sources",
                 "execute",
+                "validate_results",
                 "summarize",
             ],
         )

@@ -81,7 +81,8 @@ Responsibilities are separated into modules:
 | Module | Responsibility |
 | --- | --- |
 | `agent.py` | CLI and public wrappers that run the pipeline |
-| `pipeline.py` | Handler chain, request context, preview stops and injected service adapters |
+| `pipeline.py` | Stage adapters, request context, preview stops and injected services |
+| `pipeline_graph.py` | Typed `pydantic-graph` lifecycle and preview branches |
 | `planning.py` | Intent/plan schemas and classifier/planner agents |
 | `model_config.py` | Tenant-selected LiteLLM client configuration |
 | `data_access.py` | Workspace table allowlist, read-only SQL, result storage and source loading |
@@ -93,12 +94,20 @@ Responsibilities are separated into modules:
 | `sql_diagnostics.py` | SQLGlot preflight, engine result types, query fingerprints and repair diagnostics |
 | `sql_joins.py` | Relationship keys bound to configured business meaning and grain rules |
 | `result_contracts.py` | SQL output aliases/types, unique observation grain and population checks before step completion |
+| `python_validation.py` | Preflight for sandbox imports, SQL-backed bindings, scientific API keys and directly traceable SQL aliases |
+| `python_input_context.py` | Stringified `data` object and actual Python/Arrow types supplied before Python generation |
+| `calculation_contracts.py` | Method families, Python output contracts, invariant checks and final evidence validation |
+| `repair_feedback.py` | Typed repair destinations, rejected artifacts, authoritative contracts and retry budgets |
 | `summarization.py` | Final domain-aware presentation, requested-topic guards and deferred questions |
 | `summary_evidence.py` | Decimal totals and numeric/date checks against actual execution evidence |
 | `plan_publication.py` | Scoped pre-execution JSON publications |
 | `domain_instructions.py` | Scoped domain profile lookup for all four model roles |
 
-`PipelineServices` supplies replaceable adapters for scope resolution, model creation, classification, planning, publication, loading, execution and summarization. Stages use those adapters rather than importing the CLI. `Pipeline(..., stages=[...])` supports a different handler chain, and `set_next()` explicitly links handlers. Each run creates a fresh context, so state and data are not shared between requests.
+The default lifecycle is **resolve → classify → plan → publish → load_sources → execute → validate_results → summarize**, implemented with typed nodes in `pydantic-graph`. Classification, plan and publication previews terminate at their corresponding nodes. The graph is in process; it does not provide durable checkpoints or resumability across process restarts.
+
+`PipelineServices` supplies replaceable adapters for scope resolution, model creation, classification, planning, publication, loading, execution, validation and summarization. Stages use those adapters rather than importing the CLI. `Pipeline(..., stages=[...])` preserves the custom handler-chain API, and `set_next()` explicitly links those custom handlers. Each run creates a fresh context. The executor's tool permissions select the pending schema/SQL/Python role; these are logical generation responsibilities using the tenant's mapped model, not separate built-in agent classes.
+
+See [validation and repair architecture](docs/validation-and-repair.md) for the executable graph, contracts, retry destinations and verification limits.
 
 For example, replace presentation without changing classification, loading or execution:
 
@@ -116,9 +125,9 @@ context = await Pipeline(services).run(
 print(context.answer)
 ```
 
-The source-backed [interactive architecture diagram](.archify/architecture-analysis-pipeline-20261028-221642/analysis-pipeline.html) documents the pipeline, tenant/model/domain mapping, source loading and Monty boundary. It includes request-local token overrides, stage logs, Python deduplication, native Decimal preparation, input/result checks and final summary validation. [Architecture validation receipt](.archify/architecture-analysis-pipeline-20261028-221642/analysis-pipeline.finalize-summary.json).
+The historical source-backed [interactive architecture diagram](.archify/architecture-analysis-pipeline-20261028-221642/analysis-pipeline.html) documents the earlier pipeline, tenant/model/domain mapping, source loading and Monty boundary. It predates the graph refactor and separate result-validation stage. [Architecture validation receipt](.archify/architecture-analysis-pipeline-20261028-221642/analysis-pipeline.finalize-summary.json).
 
-The separate [agent stage responsibilities diagram](.archify/workflow-agent-stages-20261028-221642/agent-stages.html) details **resolve → classify → plan → publish → load → execute → summarize**, showing each stage's inputs, responsibilities, outputs and conditions. It also shows preview exits, failure propagation, tool retries, result reuse and clarification passthrough. These are pipeline stages rather than a persisted state machine. [Stage diagram validation receipt](.archify/workflow-agent-stages-20261028-221642/review-3/agent-stages.finalize-summary.json).
+The historical [agent stage responsibilities diagram](.archify/workflow-agent-stages-20261028-221642/agent-stages.html) shows the earlier handler chain and also predates the graph refactor. For the current lifecycle use [the graph generated from the executable nodes](docs/pipeline-graph.mmd). [Historical stage diagram receipt](.archify/workflow-agent-stages-20261028-221642/review-3/agent-stages.finalize-summary.json).
 
 Both diagrams cite source at the pinned project commit recorded in their source-provenance files ([architecture](.archify/architecture-analysis-pipeline-20261028-221642/source-provenance.json), [stages](.archify/workflow-agent-stages-20261028-221642/source-provenance.json)). Source bytes were checked against that commit; the SSH repository origin uses local-only links. Automated specification, artifact and browser checks pass for both diagrams. No perceptual screenshot review was performed.
 
@@ -151,6 +160,21 @@ for a model request), `LITELLM_MAX_RETRIES` (default 0), and
 `LITELLM_MAX_OUTPUT_TOKENS` (default 4096). Configure these in `.env` as shown in
 `.env.example`. The total deadline must be at least the attempt timeout. These
 settings do not override a shorter LiteLLM/backend server timeout.
+
+`AGENT_SUMMARIZATION_ENABLED=true` enables the final summarization stage (default).
+Set it to `false` in `.env` to skip that LLM call, or override it for one command:
+
+```sh
+AGENT_SUMMARIZATION_ENABLED=false uv run agent.py --tenant-id 1 --workspace-id 1 --trace --max-tokens 8192 \
+  "How uncertain is average PAT per customer? Show the average and a 95% range."
+```
+
+When disabled, the CLI returns the executor's report and preserves deferred
+clarification questions. SQL/Python execution and tool validation still run;
+the separate domain summary and its numeric/topic guards are bypassed. Requests
+that need no data execution return the plan's clarification/response. Logs show
+`STAGE summarize: end (skipped, ...)`. Accepted values are `true`/`false`, `1`/`0`,
+`yes`/`no`, and `on`/`off` (case insensitive). Invalid values fail before any stage.
 
 Set `AGENT_TOOL_RETRIES=5` in `.env` to allow more SQL/Python corrections, or
 override it for one command:
@@ -234,7 +258,14 @@ prewritten plan, SQL, Python or answer; explicit user periods take precedence.
 
 For contract-based plans, only the tool for the pending step is advertised. During
 Python, the host supplies current result IDs, exact aliases, Arrow/Python types,
-row counts and a small preview before code generation. Python still executes in
+row counts and an explicit `HOST_DATA_OBJECT_JSON` snapshot before code generation.
+The snapshot contains the current Python step's SQL inputs and is complete up to
+24,000 UTF-8 bytes. Larger snapshots are explicitly marked as previews, with
+included/stored row counts per result. Decimal values display as exact JSON
+strings and dates as ISO strings; the accompanying type map explains their actual
+`decimal.Decimal`/`datetime.date` types. Do not parse this JSON or copy it into code:
+read the already supplied `data[result_id]`. It is refreshed on retries and after
+SQL input repair. Python still executes in
 Monty on the complete stored rows. Code/alias errors return feedback for correction.
 The scientific capability catalog lists the bootstrap result keys explicitly
 (`estimate`, `lower`, `upper`, `standard_error`, `bootstrap_distribution`, `method`).

@@ -4,10 +4,17 @@ import json
 import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
-from pydantic_ai import Agent, ModelRetry, UsageLimits
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    create_model,
+    model_validator,
+)
+from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimits
 from pydantic_ai.models import Model
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
 
 from datasource_mapping import (
     SourceId,
@@ -21,6 +28,8 @@ from query_recipes import SqlRecipeCall, match_sql_recipe
 from runtime import model_settings, trace
 from result_contracts import SQLResultContract, validate_contract_sources
 from scientific_models import scientific_catalog
+from calculation_contracts import AnalysisKind, CalculationMethod, PythonResultContract
+from repair_feedback import RepairFeedback, repair_handoff_messages
 
 
 class Objective(BaseModel):
@@ -55,6 +64,7 @@ class QuestionIntent(BaseModel):
     ]
     objective: str = Field(min_length=1)
     constraints: list[str] = Field(default_factory=list)
+    analysis_kind: AnalysisKind | None = None
     clarification: str | None = None
     objectives: list[Objective] = Field(default_factory=list)
 
@@ -84,6 +94,8 @@ class ExecutionStep(BaseModel):
     expected_output: str = Field(min_length=1)
     output_contract: SQLResultContract | None = None
     input_steps: list[str] = Field(default_factory=list)
+    calculation: CalculationMethod | None = None
+    result_contract: PythonResultContract | None = None
 
 
 class ExecutionPlan(BaseModel):
@@ -144,6 +156,27 @@ class ExecutionPlan(BaseModel):
             raise ValueError("Step IDs must be unique")
         prior_sql = set()
         for step in self.steps:
+            if step.action != "python" and (step.calculation or step.result_contract):
+                raise ValueError(
+                    "Only Python steps declare calculation/result_contract"
+                )
+            if step.result_contract:
+                if any(
+                    rule.input_step and rule.input_step not in step.input_steps
+                    for rule in step.result_contract.invariants
+                ):
+                    raise ValueError(
+                        "Result invariants must reference this Python step's SQL input_steps"
+                    )
+            if step.calculation and step.calculation.method.startswith("scientific."):
+                method = step.calculation.method.removeprefix("scientific.")
+                operation = scientific_catalog()["operations"].get(method)
+                if operation is None or step.calculation.kind not in operation.get(
+                    "compatible_kinds", [operation["analysis_kind"], "custom"]
+                ):
+                    raise ValueError(
+                        "Calculation method does not implement its declared analysis kind; clustering cannot balance totals"
+                    )
             if step.output_contract is not None and step.action != "sql":
                 raise ValueError("Only SQL steps declare output_contract")
             if step.input_steps and (
@@ -177,18 +210,24 @@ class SchemaPlanningStep(ExecutionStep):
     action: Literal["schema"]
     output_contract: None = None
     input_steps: list[str] = Field(default_factory=list, max_length=0)
+    calculation: None = None
+    result_contract: None = None
 
 
 class SQLPlanningStep(ExecutionStep):
     action: Literal["sql"]
     output_contract: SQLResultContract
     input_steps: list[str] = Field(default_factory=list, max_length=0)
+    calculation: None = None
+    result_contract: None = None
 
 
 class PythonPlanningStep(ExecutionStep):
     action: Literal["python"]
     output_contract: None = None
     input_steps: list[str] = Field(min_length=1)
+    calculation: CalculationMethod
+    result_contract: PythonResultContract
 
 
 class PlannerOutput(ExecutionPlan):
@@ -203,7 +242,48 @@ class PlannerOutput(ExecutionPlan):
     ] = Field(max_length=12)
 
 
+def planner_output_type(analysis_kind: AnalysisKind | None):
+    """Constrain a known business outcome in the wire schema, before generation."""
+    if analysis_kind is None:
+        return PlannerOutput
+    method_type = create_model(
+        "RequestedCalculation",
+        __base__=CalculationMethod,
+        kind=(Literal[analysis_kind], ...),
+    )
+    step_type = create_model(
+        "RequestedPythonStep",
+        __base__=PythonPlanningStep,
+        calculation=(method_type, ...),
+    )
+    return create_model(
+        "RequestedPlannerOutput",
+        __base__=PlannerOutput,
+        steps=(
+            list[
+                Annotated[
+                    SchemaPlanningStep | SQLPlanningStep | step_type,
+                    Field(discriminator="action"),
+                ]
+            ],
+            Field(max_length=12),
+        ),
+    )
+
+
 class PlannerDiagnostics(AbstractCapability):
+    def __init__(self):
+        self.latest_feedback = None
+        self.owned_handoffs = set()
+
+    def handoff(self, ctx: RunContext, messages):
+        return repair_handoff_messages(
+            messages,
+            self.latest_feedback,
+            "Return a complete corrected execution plan using the configured output schema. Preserve the question, classified outcome and tenant/workspace; do not return a partial plan or a repair-feedback object.",
+            self.owned_handoffs,
+        )
+
     def on_output_validate_error(self, ctx, *, output_context, output, error):
         errors = (
             error.errors(include_input=False, include_context=False, include_url=False)
@@ -221,14 +301,36 @@ class PlannerDiagnostics(AbstractCapability):
                 default=str,
             )
         )
-        raise error
+        self.latest_feedback = RepairFeedback(
+            target="planner",
+            phase="plan_validation",
+            diagnostic=json.dumps(errors, default=str),
+            artifact={"rejected_plan": output},
+            authority={
+                "schema": "PlannerOutput",
+                "workspace_guidance": "datasource.json and domain_instructions.json",
+            },
+            retries_remaining=max(0, 3 - ctx.retry),
+            instructions=[
+                "Correct all independent plan defects together; preserve the user's objective and workspace."
+            ],
+        )
+        raise ModelRetry(self.latest_feedback.publish()) from error
 
 
 def consolidate_python_steps(plan: ExecutionPlan) -> ExecutionPlan:
     """Batch adjacent calculations while preserving every requested output."""
     steps = []
     for step in plan.steps:
-        if step.action == "python" and steps and steps[-1].action == "python":
+        if (
+            step.action == "python"
+            and steps
+            and steps[-1].action == "python"
+            and not step.result_contract
+            and not steps[-1].result_contract
+            and not step.calculation
+            and not steps[-1].calculation
+        ):
             previous = steps[-1]
             steps[-1] = previous.model_copy(
                 update={
@@ -254,6 +356,10 @@ Identify only WHAT the user asks to accomplish. Return intent, a short objective
 explicit constraints (filters, dates, groupings, output units, requested algorithms)
 and a clarification question only when the request itself is ambiguous.
 Intent is lookup, aggregation, comparison, advanced_analysis or clarification.
+For an analytical outcome, set analysis_kind to clustering (similar profiles),
+balancing (roughly equal totals), uncertainty (interval around an estimate),
+simulation, hypothesis_test or custom. This describes the requested outcome,
+not an algorithm, language or implementation. Otherwise use null.
 Do not choose data sources, tables, tools, SQL/Python, or execution steps. Do not
 query data, decide source availability, or answer the data question. Do not add
 assumptions or constraints that the user did not specify. Workspace selection is
@@ -281,6 +387,22 @@ outcome and leave implementation decisions to the planner.
 
 PLANNER_INSTRUCTIONS = """
 Create a concise, actionable execution plan from the question and classified intent.
+For Python steps declare calculation.kind and calculation.method (an available
+scientific.<function> or a named custom algorithm). Preserve the classified
+analysis_kind: equal-total balancing and similarity clustering are different tasks.
+Declare result_contract.required_fields as dot paths with expected coarse types
+and result_contract.invariants when verifiable: count_equals (output_path with '*',
+expected_count), sum_equals_input (output_path, input_step, input_column, tolerance),
+members_equal_input (output_path, input_step, input_column). '*' traverses lists or
+dict values. Input invariants name SQL steps in input_steps, never guessed result
+IDs. For groups, validate group count, member coverage and total reconciliation.
+For intervals, declare the estimate and lower/upper output fields. These contracts
+must describe the final result, not a hardcoded implementation or answer.
+Paths start at the final returned value. For a result with a groups wrapper,
+use required_fields {"groups":"list", "groups.*.members":"list",
+"groups.*.total":"numeric"}; a count_equals check on "groups.*" requires
+expected_count equal to the requested group count. Never declare group row fields
+as root fields while referring to a groups wrapper in invariants.
 Choose the implementation automatically from the business outcome, the available
 data and the workspace guidance. Never require the user to say 'use SQL' or 'use
 Python', select a language, or provide code. Missing technical preferences are not
@@ -471,10 +593,11 @@ async def build_plan(
                 ],
                 validation_checks=spec.validation_checks,
             )
+    diagnostics = PlannerDiagnostics()
     agent = Agent(
         model,
-        output_type=PlannerOutput,
-        capabilities=[PlannerDiagnostics()],
+        output_type=planner_output_type(intent.analysis_kind),
+        capabilities=[diagnostics, ProcessHistory(diagnostics.handoff)],
         instructions=(
             PLANNER_INSTRUCTIONS
             + "\nWorkspace domain guidance:\n"
@@ -489,7 +612,33 @@ async def build_plan(
     )
 
     @agent.output_validator
-    def enforce_workspace(plan: ExecutionPlan) -> ExecutionPlan:
+    def enforce_workspace(ctx: RunContext, plan: ExecutionPlan) -> ExecutionPlan:
+        for step in plan.steps:
+            if step.action == "python" and intent.analysis_kind:
+                if (
+                    not step.calculation
+                    or step.calculation.kind != intent.analysis_kind
+                    or not step.result_contract
+                ):
+                    raise ModelRetry(
+                        RepairFeedback(
+                            target="planner",
+                            phase="method_selection",
+                            step_id=step.step_id,
+                            diagnostic=f"Expected analysis_kind={intent.analysis_kind!r}; received calculation={step.calculation!r}, result_contract present={step.result_contract is not None}. Declare the matching calculation and verifiable result_contract.",
+                            authority={
+                                "analysis_kind": intent.analysis_kind,
+                                "scientific_operations": scientific_catalog()[
+                                    "operations"
+                                ],
+                            },
+                            artifact={"rejected_step": step.model_dump()},
+                            retries_remaining=max(0, 3 - ctx.retry),
+                            instructions=[
+                                "Choose an algorithm for the requested business outcome. Similarity clustering does not balance group totals."
+                            ],
+                        ).publish()
+                    )
         if (plan.tenant_id, plan.workspace_id) != (tenant_key, key):
             raise ModelRetry(f"Use only tenant {tenant_key}, workspace {key}")
         if plan.sql_recipe is not None:

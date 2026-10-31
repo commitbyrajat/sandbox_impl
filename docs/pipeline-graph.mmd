@@ -1,0 +1,33 @@
+---
+title: Analytics lifecycle
+---
+stateDiagram-v2
+  start
+  Resolve
+  Classify
+  state decision <<choice>>
+  Plan
+  state decision_2 <<choice>>
+  Publish
+  state decision_3 <<choice>>
+  LoadSources
+  Execute
+  ValidateResults
+  Summarize
+
+  [*] --> start
+  start --> Resolve
+  Resolve --> Classify
+  Classify --> decision
+  decision --> Plan
+  decision --> [*]
+  Plan --> decision_2
+  decision_2 --> [*]
+  decision_2 --> Publish
+  Publish --> decision_3
+  decision_3 --> [*]
+  decision_3 --> LoadSources
+  LoadSources --> Execute
+  Execute --> ValidateResults
+  ValidateResults --> Summarize
+  Summarize --> [*]

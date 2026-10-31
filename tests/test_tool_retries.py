@@ -133,7 +133,11 @@ class ToolRetryExecutionTests(unittest.IsolatedAsyncioTestCase):
             if 7 <= index <= 10:
                 feedback = tool_returns(messages)[-1]
                 self.assertEqual(feedback.tool_name, "run_python")
-                self.assertIn('"query_1": ["n"]', str(feedback.content))
+                repair = json.loads(
+                    str(feedback.content).removeprefix("Python execution failed: ")
+                )
+                self.assertEqual(repair["authority"]["sql_columns"], {"query_1": ["n"]})
+                self.assertEqual(repair["target"], "python_generator")
                 self.assertIn("do not rerun SQL", str(feedback.content))
                 if index in (8, 9):
                     self.assertIn("total_approved_net_spend_inr", str(feedback.content))

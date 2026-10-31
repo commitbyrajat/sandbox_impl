@@ -7,7 +7,7 @@ from contextlib import redirect_stderr
 
 from pydantic import ValidationError
 from pydantic_ai.models.function import FunctionModel
-from test_agent import executable_plan, structured_response
+from test_agent import executable_plan, structured_response, tool_returns
 from test_model_protocol import completion, mock_provider
 
 from model_config import configured_model
@@ -101,7 +101,7 @@ class PlannerSchemaTests(unittest.IsolatedAsyncioTestCase):
                     " ".join(prompt["applicable_workspace_guidance"]),
                 )
             if calls == 2:
-                feedback = str(messages[-1])
+                feedback = json.loads(tool_returns(messages)[-1].content)["diagnostic"]
                 self.assertIn("grain=['customer_id']", feedback)
                 self.assertIn("Input should be None", feedback)
             return structured_response(info, proposal(invalid=calls == 1))

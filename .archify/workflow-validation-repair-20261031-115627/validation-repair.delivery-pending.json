@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "command": "deliver",
+  "status": "pending",
+  "receiptId": "5134f78c-6c46-46e8-9bf6-91faa8240ac8",
+  "input": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-validation-repair-20261031-115627/candidate.json",
+  "output": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-validation-repair-20261031-115627/validation-repair.html"
+}

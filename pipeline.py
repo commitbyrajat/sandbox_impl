@@ -1,4 +1,4 @@
-"""An injectable chain of responsibility for the question-to-answer lifecycle."""
+"""Typed graph orchestration with injectable stages and a compatible custom chain."""
 
 import asyncio
 import json
@@ -13,16 +13,21 @@ from pydantic_ai.exceptions import ModelRequestTimeout, ModelTimeoutError
 from pydantic_ai.models import Model
 
 from data_access import DataSources, load_sources
-from datasource_mapping import (RequestScope, classification_context,
-                                resolve_scope)
+from datasource_mapping import RequestScope, classification_context, resolve_scope
 from domain_instructions import domain_context
 from execution import ExecutionResult, execute_plan
 from model_config import configured_model
 from plan_publication import publish_plan
 from planning import ExecutionPlan, QuestionIntent, build_plan, classify_intent
-from runtime import (MAX_TOKENS_OVERRIDE, TRACE_ENABLED, PipelineModelTimeout,
-                     trace)
+from runtime import (
+    MAX_TOKENS_OVERRIDE,
+    TRACE_ENABLED,
+    PipelineModelTimeout,
+    summarization_enabled,
+    trace,
+)
 from summarization import append_clarifications, summarize_result
+from calculation_contracts import validate_execution_result
 
 
 @dataclass(frozen=True)
@@ -56,7 +61,9 @@ class PipelineContext:
     sources: DataSources | None = None
     execution: ExecutionResult | None = None
     answer: str | None = None
+    summarization_enabled: bool = True
     completed_stages: list[str] = field(default_factory=list)
+    skipped_stages: list[str] = field(default_factory=list)
     stage_timings: dict[str, float] = field(default_factory=dict)
     stopped: bool = False
 
@@ -76,6 +83,9 @@ class PipelineServices:
     publish: Callable[..., Any] = field(default_factory=lambda: publish_plan)
     load: Callable[..., Any] = field(default_factory=lambda: load_sources)
     execute: Callable[..., Any] = field(default_factory=lambda: execute_plan)
+    validate: Callable[..., Any] = field(
+        default_factory=lambda: validate_execution_result
+    )
     summarize: Callable[..., Any] = field(default_factory=lambda: summarize_result)
 
 
@@ -98,7 +108,9 @@ class PipelineStage(ABC):
         self.next_stage = successor
         return successor
 
-    async def handle(self, context: PipelineContext) -> PipelineContext:
+    async def handle(
+        self, context: PipelineContext, *, forward: bool = True
+    ) -> PipelineContext:
         token = TRACE_ENABLED.set(context.request.trace)
         started = monotonic()
         print(f"STAGE {self.name}: start", file=sys.stderr, flush=True)
@@ -124,7 +136,7 @@ class PipelineStage(ABC):
             )
             raise
         else:
-            status = "completed"
+            status = "skipped" if self.name in context.skipped_stages else "completed"
         finally:
             context.stage_timings[self.name] = monotonic() - started
             print(
@@ -133,8 +145,9 @@ class PipelineStage(ABC):
                 flush=True,
             )
             TRACE_ENABLED.reset(token)
-        context.completed_stages.append(self.name)
-        if self.next_stage is not None and not context.stopped:
+        if status != "skipped":
+            context.completed_stages.append(self.name)
+        if forward and self.next_stage is not None and not context.stopped:
             return await self.next_stage.handle(context)
         return context
 
@@ -265,11 +278,27 @@ class ExecuteStage(PipelineStage):
                 print(label + json.dumps(run, default=str), file=sys.stderr)
 
 
+class ValidateResultsStage(PipelineStage):
+    name = "validate_results"
+
+    async def process(self, context: PipelineContext) -> None:
+        self.services.validate(require(context.plan, "plan"), context.execution)
+
+
 class SummarizeStage(PipelineStage):
     name = "summarize"
 
     async def process(self, context: PipelineContext) -> None:
         plan = require(context.plan, "plan")
+        if not context.summarization_enabled:
+            context.skipped_stages.append(self.name)
+            answer = (
+                context.execution.draft
+                if context.execution is not None
+                else plan.response or ""
+            )
+            context.answer = append_clarifications(answer, plan)
+            return
         answer = await self.services.summarize(
             context.request.question,
             plan,
@@ -287,6 +316,7 @@ class Pipeline:
         stages: list[PipelineStage] | None = None,
     ):
         self.services = services or PipelineServices()
+        self.use_graph = stages is None
         self.stages = (
             stages
             if stages is not None
@@ -299,6 +329,7 @@ class Pipeline:
                     PublishStage,
                     LoadSourcesStage,
                     ExecuteStage,
+                    ValidateResultsStage,
                     SummarizeStage,
                 )
             ]
@@ -320,8 +351,15 @@ class Pipeline:
             raise ValueError("max_tokens must be a positive integer")
         token = MAX_TOKENS_OVERRIDE.set(request.max_tokens)
         try:
-            return await self.stages[0].handle(
-                PipelineContext(request, models or PipelineModels())
+            context = PipelineContext(
+                request,
+                models or PipelineModels(),
+                summarization_enabled=summarization_enabled(),
             )
+            if self.use_graph:
+                from pipeline_graph import LIFECYCLE_GRAPH
+
+                return await LIFECYCLE_GRAPH.run(state=context, deps=self)
+            return await self.stages[0].handle(context)
         finally:
             MAX_TOKENS_OVERRIDE.reset(token)

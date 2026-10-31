@@ -30,7 +30,14 @@ class PlanningTests(unittest.IsolatedAsyncioTestCase):
             properties = info.output_tools[0].parameters_json_schema["properties"]
             self.assertEqual(
                 set(properties),
-                {"intent", "objective", "constraints", "clarification", "objectives"},
+                {
+                    "intent",
+                    "objective",
+                    "constraints",
+                    "clarification",
+                    "objectives",
+                    "analysis_kind",
+                },
             )
             return structured_response(
                 info,

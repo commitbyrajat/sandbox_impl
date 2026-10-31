@@ -7,32 +7,111 @@
   "operations": {
     "kmeans": {
       "signature": "kmeans(observations: list[list[Number]], *, clusters: int = 3, max_iterations: int = 50, standardize: bool = True, initialization: str = 'farthest_first', seed: int = 42, stream: int = 0) -> dict[str, Any]",
-      "description": "SciPy kmeans2 on a finite rectangular matrix. Returns labels in input order, centroids, counts, convergence and method metadata. Standardization uses population standard deviation and ignores constant dimensions. Farthest-first initialization starts with the first input row; sort observations by the required entity ID first. Fewer distinct profiles produce fewer clusters. Monetary averages should be recomputed from original Decimal rows using labels."
+      "description": "SciPy kmeans2 on a finite rectangular matrix. Returns labels in input order, centroids, counts, convergence and method metadata. Standardization uses population standard deviation and ignores constant dimensions. Farthest-first initialization starts with the first input row; sort observations by the required entity ID first. Fewer distinct profiles produce fewer clusters. Monetary averages should be recomputed from original Decimal rows using labels.",
+      "returns": {
+        "labels": "list[int]",
+        "centroids": "list[list[float]]",
+        "counts": "list[int]",
+        "clusters_requested": "int",
+        "clusters_found": "int",
+        "iterations": "int",
+        "converged": "bool",
+        "constant_features": "list[int]",
+        "method": "dict[str, Any]"
+      },
+      "analysis_kind": "clustering",
+      "input_example": "matrix = [[float(row['feature_a']), float(row['feature_b'])] for row in rows]; result = await scientific.kmeans(matrix); result['labels']; result['converged']"
     },
     "bootstrap": {
-      "returns": {"estimate": "float", "lower": "float", "upper": "float", "standard_error": "float", "bootstrap_distribution": "list[float]", "method": "dict[str, Any]"},
+      "returns": {
+        "estimate": "float",
+        "lower": "float",
+        "upper": "float",
+        "standard_error": "float",
+        "bootstrap_distribution": "list[float]",
+        "method": "dict[str, Any]"
+      },
       "signature": "bootstrap(values: list[Number], *, statistic: str = 'mean', n_resamples: int = 1000, confidence_level: float = 0.95, method: str = 'percentile', quantile_method: str = 'nearest_rank', seed: int = 42, stream: int = 0) -> dict[str, Any]",
-      "description": "SciPy bootstrap for mean, median, sum or population std. Returns estimate, lower/upper confidence bounds, standard error, bootstrap distribution and method metadata. Nearest-rank bounds use inverted-CDF quantiles and require percentile method; basic/BCa require quantile_method='linear'. Inspect warnings and degeneracy."
+      "description": "SciPy bootstrap for mean, median, sum or population std. Returns estimate, lower/upper confidence bounds, standard error, bootstrap distribution and method metadata. Nearest-rank bounds use inverted-CDF quantiles and require percentile method; basic/BCa require quantile_method='linear'. Inspect warnings and degeneracy.",
+      "analysis_kind": "uncertainty"
     },
     "sample": {
       "signature": "sample(distribution: str, parameters: dict[str, Any], *, size: int | list[int] = 1000, seed: int = 42, stream: int = 0) -> dict[str, Any]",
-      "description": "Generate batched SciPy random draws for general Monte Carlo calculations inside Monty. Distributions: normal/uniform use loc and positive scale; binomial uses integer n and probability p; bernoulli uses p. Vector parameters can broadcast against size, e.g. probabilities per cohort and size=[1000, cohort_count]. Returns samples, shape and method metadata. Aggregate domain-specific outcomes in Monty, preserving Decimal money."
+      "description": "Generate batched SciPy random draws for general Monte Carlo calculations inside Monty. Distributions: normal/uniform use loc and positive scale; binomial uses integer n and probability p; bernoulli uses p. Vector parameters can broadcast against size, e.g. probabilities per cohort and size=[1000, cohort_count]. Returns samples, shape and method metadata. Aggregate domain-specific outcomes in Monty, preserving Decimal money.",
+      "returns": {
+        "samples": "list",
+        "shape": "list[int]",
+        "method": "dict[str, Any]"
+      },
+      "analysis_kind": "simulation",
+      "compatible_kinds": [
+        "simulation",
+        "uncertainty",
+        "hypothesis_test",
+        "custom"
+      ]
     },
     "binomial": {
       "signature": "binomial(n: int, p: float, *, size: int = 1000, seed: int = 42, stream: int = 0) -> dict[str, Any]",
-      "description": "SciPy binomial draws plus theoretical mean/variance. n is a nonnegative trial count and p is in [0,1]. For vector probabilities use sample."
+      "description": "SciPy binomial draws plus theoretical mean/variance. n is a nonnegative trial count and p is in [0,1]. For vector probabilities use sample.",
+      "returns": {
+        "samples": "list[int]",
+        "shape": "list[int]",
+        "theoretical_mean": "float",
+        "theoretical_variance": "float",
+        "method": "dict[str, Any]"
+      },
+      "analysis_kind": "simulation",
+      "compatible_kinds": [
+        "simulation",
+        "uncertainty",
+        "hypothesis_test",
+        "custom"
+      ]
     },
     "bernoulli": {
       "signature": "bernoulli(p: float = 0.5, *, size: int = 1000, seed: int = 42, stream: int = 0) -> dict[str, Any]",
-      "description": "SciPy coin flips (0/1) with probability p, plus theoretical mean/variance."
+      "description": "SciPy coin flips (0/1) with probability p, plus theoretical mean/variance.",
+      "returns": {
+        "samples": "list[int]",
+        "shape": "list[int]",
+        "theoretical_mean": "float",
+        "theoretical_variance": "float",
+        "method": "dict[str, Any]"
+      },
+      "analysis_kind": "simulation",
+      "compatible_kinds": [
+        "simulation",
+        "uncertainty",
+        "hypothesis_test",
+        "custom"
+      ]
     },
     "resample_indices": {
       "signature": "resample_indices(n_observations: int, *, n_resamples: int = 1000, seed: int = 42, stream: int = 0) -> dict[str, Any]",
-      "description": "NumPy sampling with replacement: returns an n_resamples by n_observations index matrix. Use indices to implement custom statistics on original Decimal rows in Monty without passing sandbox functions into CPython."
+      "description": "NumPy sampling with replacement: returns an n_resamples by n_observations index matrix. Use indices to implement custom statistics on original Decimal rows in Monty without passing sandbox functions into CPython.",
+      "returns": {
+        "indices": "list[list[int]]",
+        "method": "dict[str, Any]"
+      },
+      "analysis_kind": "simulation",
+      "compatible_kinds": [
+        "simulation",
+        "uncertainty",
+        "hypothesis_test",
+        "custom"
+      ]
     },
     "monte_carlo_test": {
       "signature": "monte_carlo_test(values: list[Number], *, distribution: str = 'normal', parameters: dict[str, Any] | None = None, statistic: str = 'mean', n_resamples: int = 1000, alternative: str = 'two-sided', seed: int = 42, stream: int = 0) -> dict[str, Any]",
-      "description": "SciPy Monte Carlo hypothesis test for a named distribution and statistic (mean, median, sum, std). Returns observed statistic, p-value, null distribution and method metadata. This is a hypothesis test, not a general portfolio-loss forecast; use sample for simulation of outcomes."
+      "description": "SciPy Monte Carlo hypothesis test for a named distribution and statistic (mean, median, sum, std). Returns observed statistic, p-value, null distribution and method metadata. This is a hypothesis test, not a general portfolio-loss forecast; use sample for simulation of outcomes.",
+      "returns": {
+        "statistic": "float",
+        "pvalue": "float",
+        "null_distribution": "list[float]",
+        "method": "dict[str, Any]"
+      },
+      "analysis_kind": "hypothesis_test"
     }
   },
   "calling_convention": "All functions are async host operations: import scientific; result = await scientific.kmeans(matrix). Monty supports top-level await. Await results before indexing; do not return coroutine objects."

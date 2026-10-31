@@ -385,7 +385,8 @@ class ScientificPipelineTests(unittest.IsolatedAsyncioTestCase):
             turns = tool_returns(messages)
             if len(turns) == 3:
                 feedback = str(turns[-1].content)
-                self.assertIn("KeyError: confidence_interval", feedback)
+                self.assertIn("Scientific result key", feedback)
+                self.assertIn("confidence_interval", feedback)
                 self.assertIn("result['lower']", feedback)
                 self.assertIn("Keep completed SQL results", feedback)
             if len(turns) < len(actions):

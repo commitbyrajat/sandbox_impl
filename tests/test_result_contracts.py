@@ -341,6 +341,12 @@ class ContractPipelineTests(unittest.IsolatedAsyncioTestCase):
                 )
             if calls == 5:
                 self.assertEqual(set(state(info)["sql_inputs"]), {"query_2"})
+                snapshot = json.loads(
+                    info.instructions.split("HOST_DATA_OBJECT_JSON_BEGIN\n", 1)[
+                        1
+                    ].split("\nHOST_DATA_OBJECT_JSON_END", 1)[0]
+                )
+                self.assertEqual(snapshot, {"query_2": [{"n": 20}]})
                 return action(
                     "run_python",
                     step_id="s3",

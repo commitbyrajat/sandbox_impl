@@ -438,6 +438,26 @@ FIXED = "SELECT SUM(approved_net_spend_inr) AS spend,SUM(profit_inr) AS profit,S
 
 
 class SQLRetryTests(unittest.IsolatedAsyncioTestCase):
+    def test_datafusion_type_function_errors_supply_valid_cast_syntax(self):
+        context = SessionContext()
+        for name in ("DATE", "TIMESTAMP"):
+            with (
+                self.subTest(name=name),
+                self.assertRaises(SQLPreflightError) as raised,
+            ):
+                preflight_sql(f"SELECT {name}('2026-01-01') AS day", {}, context)
+            diagnostic = raised.exception.diagnostic
+            self.assertEqual(diagnostic.phase, "datafusion_compile")
+            issue = next(
+                issue
+                for issue in diagnostic.issues
+                if issue.kind == "unsupported_type_function"
+            )
+            self.assertIn("CAST(", issue.repair)
+            self.assertIn(
+                "DATE(...) and TIMESTAMP(...) are both unsupported", issue.repair
+            )
+
     def setUp(self):
         patcher = patch.dict(os.environ, {"AGENT_TOOL_RETRIES": "3"})
         patcher.start()
@@ -464,8 +484,20 @@ class SQLRetryTests(unittest.IsolatedAsyncioTestCase):
             index = len(requests)
             requests.append(body)
             if index in (2, 3):
-                self.assertEqual(body["messages"][-1]["role"], "tool")
-                envelope = json.loads(body["messages"][-1]["content"])
+                self.assertEqual(body["messages"][-1]["role"], "user")
+                self.assertIn(
+                    "Host validation repair handoff", body["messages"][-1]["content"]
+                )
+                self.assertIn("sql_generator", body["messages"][-1]["content"])
+                self.assertIn(
+                    "f.approved_net_spend_inr", body["messages"][-1]["content"]
+                )
+                last_tool = next(
+                    message
+                    for message in reversed(body["messages"])
+                    if message["role"] == "tool"
+                )
+                envelope = json.loads(last_tool["content"])
                 feedback = json.loads(envelope["error"])
                 self.assertEqual(feedback["phase"], "qualification")
                 self.assertEqual(

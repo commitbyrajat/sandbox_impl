@@ -79,6 +79,8 @@ class SummaryEvidence:
     def unsupported_values(self, answer: str) -> list[str]:
         problems = [day for day in ISO_DATE.findall(answer) if day not in self.dates]
         text = ISO_DATE.sub(" ", answer)
+        # Emphasis changes presentation, not whether a method number is grounded.
+        text = re.sub(r"(\*\*|__|`)(.*?)\1", r"\2", text)
         # Preserve financial signs when a currency symbol separates minus and amount.
         text = re.sub(r"-\s*(?:INR|₹|Rs\.?)\s*(?=\d)", "-", text, flags=re.IGNORECASE)
 
@@ -87,7 +89,7 @@ class SummaryEvidence:
             return " " if value is not None and -value in self.numbers else match[0]
 
         text = re.sub(
-            r"\bloss(?:es)?(?:\s+(?:of|is|was|totaling))?\s*:?\s*(?:INR|₹|Rs\.?)\s*(?P<value>\d[\d,]*(?:\.\d+)?)",
+            r"\bloss(?:es)?(?:\s+(?:of|is|was|totaling|over|around|about|approximately|reaching|up\s+to))*\s*:?\s*(?:INR|₹|Rs\.?)\s*(?P<value>\d[\d,]*(?:\.\d+)?)",
             loss_magnitude,
             text,
             flags=re.IGNORECASE,
@@ -119,7 +121,7 @@ class SummaryEvidence:
             flags=re.IGNORECASE,
         )
         text = re.sub(
-            r"\bseed(?:ed)?(?:\s+(?:of|at|with))?\s*[:=]?\s*(?P<value>\d+)\b",
+            r"\bseed(?:ed)?(?:\s+(?:of|at|with))?\s*[:=]?\s*[\[(]?\s*(?P<value>\d+)\b",
             method_parameter,
             text,
             flags=re.IGNORECASE,

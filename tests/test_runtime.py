@@ -11,11 +11,45 @@ from test_pipeline import adapters
 from domain_instructions import DOMAIN_PROFILES
 from execution import ExecutionResult
 from pipeline import Pipeline, PipelineModels, PipelineRequest
-from runtime import PipelineModelTimeout, model_settings, result_preview
+from runtime import (
+    PipelineModelTimeout,
+    model_settings,
+    result_preview,
+    summarization_enabled,
+    calculation_preview,
+)
 from summary_evidence import prepare_evidence
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
+    def test_summary_preview_preserves_metrics_and_full_members_but_omits_raw_draws(
+        self,
+    ):
+        original = {
+            "lower": Decimal("1.23"),
+            "upper": 4.56,
+            "members": list(range(100)),
+            "bootstrap_distribution": list(range(1000)),
+        }
+        view = calculation_preview(original)
+        self.assertEqual(view["lower"], Decimal("1.23"))
+        self.assertEqual(view["members"], list(range(100)))
+        self.assertEqual(
+            view["bootstrap_distribution"],
+            {"raw_scientific_series_omitted": True, "stored_value_count": 1000},
+        )
+        self.assertEqual(len(original["bootstrap_distribution"]), 1000)
+
+    def test_summary_toggle_defaults_enabled_and_accepts_boolean_values(self):
+        with patch("runtime.load_dotenv"), patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(summarization_enabled())
+            for value in ("true", "1", "YES", " on "):
+                os.environ["AGENT_SUMMARIZATION_ENABLED"] = value
+                self.assertTrue(summarization_enabled())
+            for value in ("false", "0", "NO", " off "):
+                os.environ["AGENT_SUMMARIZATION_ENABLED"] = value
+                self.assertFalse(summarization_enabled())
+
     def test_shared_model_budget_and_validation(self):
         with patch("runtime.load_dotenv"), patch.dict(os.environ, {}, clear=True):
             settings = model_settings()

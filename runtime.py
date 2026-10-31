@@ -82,6 +82,19 @@ def tool_retry_limit() -> int:
     return value
 
 
+def summarization_enabled() -> bool:
+    """Allow bypassing the final presentation model while keeping execution intact."""
+    load_dotenv(ROOT / ".env")
+    value = os.getenv("AGENT_SUMMARIZATION_ENABLED", "true").strip().lower()
+    if value in {"true", "1", "yes", "on"}:
+        return True
+    if value in {"false", "0", "no", "off"}:
+        return False
+    raise ValueError(
+        "AGENT_SUMMARIZATION_ENABLED must be true/false, 1/0, yes/no or on/off"
+    )
+
+
 def model_error_detail(error: ModelAPIError) -> str:
     """Expose the provider's useful message without dumping headers or credentials."""
     body = error.body
@@ -123,6 +136,30 @@ def result_preview(result: dict, limit: int = 12) -> dict:
         "rows_preview_only": True,
         "complete_rows_available_for_python": not result.get("truncated", False),
     }
+
+
+def calculation_preview(value):
+    """Keep computed results and members; omit long raw scientific working arrays."""
+    if isinstance(value, dict):
+        raw_series = {
+            "bootstrap_distribution",
+            "null_distribution",
+            "samples",
+            "indices",
+        }
+        return {
+            key: (
+                {"raw_scientific_series_omitted": True, "stored_value_count": len(item)}
+                if key in raw_series
+                and isinstance(item, (list, tuple))
+                and len(item) > 50
+                else calculation_preview(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [calculation_preview(item) for item in value]
+    return value
 
 
 class PipelineModelTimeout(RuntimeError):

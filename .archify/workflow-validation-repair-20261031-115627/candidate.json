@@ -1,0 +1,478 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Validation and repair workflow design",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "output": ".archify/workflow-validation-repair-20261031-115627/validation-repair.html"
+  },
+  "lanes": [
+    {
+      "id": "plan",
+      "label": "Scope and plan"
+    },
+    {
+      "id": "plan_repair",
+      "label": "Plan correction",
+      "variant": "exception"
+    },
+    {
+      "id": "sql",
+      "label": "SQL preparation"
+    },
+    {
+      "id": "sql_repair",
+      "label": "SQL correction",
+      "variant": "exception"
+    },
+    {
+      "id": "python",
+      "label": "Sandbox calculation"
+    },
+    {
+      "id": "python_repair",
+      "label": "Code correction",
+      "variant": "exception"
+    },
+    {
+      "id": "answer",
+      "label": "Evidence and response"
+    },
+    {
+      "id": "answer_repair",
+      "label": "Output correction",
+      "variant": "exception"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "scope",
+      "lane": "plan",
+      "col": 0,
+      "type": "security",
+      "label": "Resolve scope",
+      "sublabel": "Tenant and workspace",
+      "width": 155
+    },
+    {
+      "id": "intent",
+      "lane": "plan",
+      "col": 1,
+      "type": "backend",
+      "label": "Classify intent",
+      "sublabel": "Outcome, not algorithm",
+      "width": 155
+    },
+    {
+      "id": "plan",
+      "lane": "plan",
+      "col": 2,
+      "type": "backend",
+      "label": "Plan and validate",
+      "sublabel": "Typed method and contracts",
+      "width": 155
+    },
+    {
+      "id": "publish",
+      "lane": "plan_repair",
+      "col": 0,
+      "type": "database",
+      "label": "Publish and load",
+      "sublabel": "Scoped plan and sources",
+      "width": 155
+    },
+    {
+      "id": "plan_fix",
+      "lane": "plan_repair",
+      "col": 2,
+      "type": "messagebus",
+      "label": "Repair plan",
+      "sublabel": "Schema or method mismatch",
+      "width": 155
+    },
+    {
+      "id": "sql_gen",
+      "lane": "sql",
+      "col": 0,
+      "type": "backend",
+      "label": "Generate SQL",
+      "sublabel": "Registry and join meaning",
+      "width": 155
+    },
+    {
+      "id": "sql_validate",
+      "lane": "sql",
+      "col": 1,
+      "type": "security",
+      "label": "Validate SQL",
+      "sublabel": "SQLGlot and DataFusion",
+      "width": 155
+    },
+    {
+      "id": "sql_result",
+      "lane": "sql",
+      "col": 2,
+      "type": "security",
+      "label": "Check observations",
+      "sublabel": "Types, grain, population",
+      "width": 155
+    },
+    {
+      "id": "sql_store",
+      "lane": "sql",
+      "col": 3,
+      "type": "database",
+      "label": "Retain SQL evidence",
+      "sublabel": "Exact aliases and types",
+      "width": 155
+    },
+    {
+      "id": "sql_fix",
+      "lane": "sql_repair",
+      "col": 1,
+      "type": "messagebus",
+      "label": "Repair SQL",
+      "sublabel": "Same pending step",
+      "width": 155
+    },
+    {
+      "id": "py_gen",
+      "lane": "python",
+      "col": 3,
+      "type": "backend",
+      "label": "Generate Python",
+      "sublabel": "Current inputs and API",
+      "width": 155
+    },
+    {
+      "id": "py_check",
+      "lane": "python",
+      "col": 4,
+      "type": "security",
+      "label": "Python preflight",
+      "sublabel": "Imports, bindings, keys",
+      "width": 155
+    },
+    {
+      "id": "monty",
+      "lane": "python",
+      "col": 5,
+      "type": "backend",
+      "label": "Execute in Monty",
+      "sublabel": "Worker calls are allowlisted",
+      "width": 155
+    },
+    {
+      "id": "py_fix",
+      "lane": "python_repair",
+      "col": 4,
+      "type": "messagebus",
+      "label": "Repair Python",
+      "sublabel": "Keep successful SQL",
+      "width": 155
+    },
+    {
+      "id": "results",
+      "lane": "answer",
+      "col": 5,
+      "type": "security",
+      "label": "Validate results",
+      "sublabel": "Declared invariants",
+      "width": 155
+    },
+    {
+      "id": "summary",
+      "lane": "answer",
+      "col": 4,
+      "type": "backend",
+      "label": "Optional summary",
+      "sublabel": "Grounded presentation",
+      "width": 155
+    },
+    {
+      "id": "answer",
+      "lane": "answer",
+      "col": 3,
+      "type": "frontend",
+      "label": "Return answer",
+      "sublabel": "Preserve clarifications",
+      "width": 155
+    },
+    {
+      "id": "result_fix",
+      "lane": "answer_repair",
+      "col": 2,
+      "type": "messagebus",
+      "label": "Repair calculation",
+      "sublabel": "Do not commit bad output",
+      "width": 155
+    },
+    {
+      "id": "summary_fix",
+      "lane": "answer_repair",
+      "col": 4,
+      "type": "messagebus",
+      "label": "Repair summary",
+      "sublabel": "Presentation only",
+      "width": 155
+    }
+  ],
+  "edges": [
+    {
+      "id": "scope-intent",
+      "from": "scope",
+      "to": "intent",
+      "role": "main",
+      "variant": "default"
+    },
+    {
+      "id": "intent-plan",
+      "from": "intent",
+      "to": "plan",
+      "role": "main",
+      "variant": "default"
+    },
+    {
+      "id": "plan-publish",
+      "from": "plan",
+      "to": "publish",
+      "role": "main",
+      "variant": "default"
+    },
+    {
+      "id": "publish-sql_gen",
+      "from": "publish",
+      "to": "sql_gen",
+      "role": "main",
+      "variant": "default"
+    },
+    {
+      "id": "sql_gen-sql_validate",
+      "from": "sql_gen",
+      "to": "sql_validate",
+      "role": "main",
+      "variant": "default"
+    },
+    {
+      "id": "sql_validate-sql_result",
+      "from": "sql_validate",
+      "to": "sql_result",
+      "role": "main",
+      "variant": "default"
+    },
+    {
+      "id": "sql_result-sql_store",
+      "from": "sql_result",
+      "to": "sql_store",
+      "role": "main",
+      "variant": "default"
+    },
+    {
+      "id": "sql_store-py_gen",
+      "from": "sql_store",
+      "to": "py_gen",
+      "role": "main",
+      "variant": "default",
+      "label": "SQL + Python"
+    },
+    {
+      "id": "py_gen-py_check",
+      "from": "py_gen",
+      "to": "py_check",
+      "role": "main",
+      "variant": "default"
+    },
+    {
+      "id": "py_check-monty",
+      "from": "py_check",
+      "to": "monty",
+      "role": "main",
+      "variant": "default"
+    },
+    {
+      "id": "monty-results",
+      "from": "monty",
+      "to": "results",
+      "role": "main",
+      "variant": "default"
+    },
+    {
+      "id": "results-summary",
+      "from": "results",
+      "to": "summary",
+      "role": "main",
+      "variant": "default"
+    },
+    {
+      "id": "summary-answer",
+      "from": "summary",
+      "to": "answer",
+      "role": "main",
+      "variant": "default"
+    },
+    {
+      "id": "plan-plan_fix",
+      "from": "plan",
+      "to": "plan_fix",
+      "role": "error",
+      "variant": "security",
+      "label": "invalid"
+    },
+    {
+      "id": "plan_fix-plan",
+      "from": "plan_fix",
+      "to": "plan",
+      "role": "return",
+      "variant": "dashed",
+      "label": "revise"
+    },
+    {
+      "id": "sql_validate-sql_fix",
+      "from": "sql_validate",
+      "to": "sql_fix",
+      "role": "error",
+      "variant": "security",
+      "label": "invalid"
+    },
+    {
+      "id": "sql_result-sql_fix",
+      "from": "sql_result",
+      "to": "sql_fix",
+      "role": "error",
+      "variant": "security",
+      "label": "incomplete"
+    },
+    {
+      "id": "sql_fix-sql_gen",
+      "from": "sql_fix",
+      "to": "sql_gen",
+      "role": "return",
+      "variant": "dashed",
+      "label": "revise"
+    },
+    {
+      "id": "py_check-py_fix",
+      "from": "py_check",
+      "to": "py_fix",
+      "role": "error",
+      "variant": "security",
+      "label": "rejected"
+    },
+    {
+      "id": "monty-py_fix",
+      "from": "monty",
+      "to": "py_fix",
+      "role": "error",
+      "variant": "security",
+      "label": "runtime error"
+    },
+    {
+      "id": "py_fix-py_gen",
+      "from": "py_fix",
+      "to": "py_gen",
+      "role": "return",
+      "variant": "dashed",
+      "label": "revise"
+    },
+    {
+      "id": "py_gen-sql_fix",
+      "from": "py_gen",
+      "to": "sql_fix",
+      "role": "branch",
+      "variant": "dashed",
+      "label": "input defect; limit 2"
+    },
+    {
+      "id": "results-result_fix",
+      "from": "results",
+      "to": "result_fix",
+      "role": "error",
+      "variant": "security",
+      "label": "invalid output"
+    },
+    {
+      "id": "result_fix-py_gen",
+      "from": "result_fix",
+      "to": "py_gen",
+      "role": "return",
+      "variant": "dashed",
+      "label": "revise result",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "summary-summary_fix",
+      "from": "summary",
+      "to": "summary_fix",
+      "role": "error",
+      "variant": "security",
+      "label": "unsupported claim"
+    },
+    {
+      "id": "summary_fix-summary",
+      "from": "summary_fix",
+      "to": "summary",
+      "role": "return",
+      "variant": "dashed",
+      "label": "revise text",
+      "fromSide": "left",
+      "toSide": "left",
+      "route": "return-left",
+      "channelX": 760
+    },
+    {
+      "id": "sql_store-results",
+      "from": "sql_store",
+      "to": "results",
+      "role": "branch",
+      "variant": "dashed",
+      "label": "SQL only",
+      "fromSide": "right",
+      "toSide": "right",
+      "route": "outside-right",
+      "channelX": 1300
+    },
+    {
+      "id": "results-answer",
+      "from": "results",
+      "to": "answer",
+      "role": "branch",
+      "variant": "dashed",
+      "label": "summary disabled"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Execution ownership",
+      "items": [
+        "pydantic-graph controls the lifecycle; PydanticAI tool retries regenerate rejected proposals.",
+        "SQL executes in DataFusion. Generated Python executes in Monty; scientific calls use an isolated worker."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Repair contract",
+      "items": [
+        "Feedback includes the rejected artifact, exact error, authoritative contracts and remaining budget.",
+        "An input repair invalidates affected results; unrelated SQL evidence can be reused.",
+        "Static checks cover supported imports and directly traceable keys; runtime and declared invariants remain necessary."
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Working-tree design",
+      "items": [
+        "This design describes the uncommitted refactor; no pinned-commit source verification is claimed.",
+        "Implementation: pipeline_graph.py, python_validation.py, calculation_contracts.py, repair_feedback.py.",
+        "Preview modes stop before execution. Workspace scope remains immutable."
+      ]
+    }
+  ],
+  "mainPath": [
+    "scope",
+    "intent",
+    "plan"
+  ]
+}

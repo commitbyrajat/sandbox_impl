@@ -1,6 +1,7 @@
 """Schema-aware SQLGlot preflight and structured, domain-agnostic repair feedback."""
 
 import hashlib
+import re
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -295,6 +296,27 @@ def sql_diagnostic(
         issues, inputs, types = scope_details(statement, schemas)
     except Exception:
         issues, inputs, types = [], [], {}
+    invalid_cast = re.search(
+        r"Invalid function ['\"](date|timestamp|time|decimal|numeric|double|integer|varchar)['\"]",
+        error,
+        re.IGNORECASE,
+    )
+    if invalid_cast:
+        repair = (
+            "DataFusion type conversion uses CAST(expression AS SQL_TYPE), not a function named after the type. "
+            "Use CAST(timestamp_column AS DATE), CAST('2026-01-01' AS DATE), "
+            "or the typed literal DATE '2026-01-01'. DATE(...) and TIMESTAMP(...) are both unsupported; "
+            "do not replace one invalid type-function call with another. Keep the actual workspace column names."
+        )
+        issues.append(
+            SQLIssue(
+                kind="unsupported_type_function",
+                scope="datafusion",
+                reference=invalid_cast[1],
+                repair=repair,
+            )
+        )
+        notes.insert(0, repair)
     if phase == "qualification":
         try:
             tree = normalize_identifiers(

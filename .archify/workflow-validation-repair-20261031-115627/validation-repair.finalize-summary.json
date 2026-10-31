@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "finalize",
+  "status": "fail",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-validation-repair-20261031-115627/candidate.json",
+    "sha256": "27880db9c357c4bc071675f81a7be8b2a8dea2babd071cdea4e589009e66f557",
+    "bytes": 10791
+  },
+  "artifact": {
+    "path": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-validation-repair-20261031-115627/validation-repair.html"
+  },
+  "gates": {
+    "validate": "fail",
+    "deliver": "not-run",
+    "check": "not-run",
+    "browser-check": "not-run"
+  },
+  "failedStage": "validate",
+  "diagnostics": [
+    {
+      "code": "composition/ambiguous-corridor",
+      "severity": "error",
+      "message": "[composition/ambiguous-corridor] showcase workflow edges[19] id \"sql_result-sql_fix\" \"sql_result\" -> \"sql_fix\" shares a 12px corridor with edges[23] id \"sql_validate-sql_fix\" \"sql_validate\" -> \"sql_fix\" at [320.5, 414] -> [332.5, 414] (segments 1 and 1; minimum 8px) — adjust route/via, bias, or channel coordinates so unrelated edges do not visually merge.",
+      "subject": {
+        "diagramType": "workflow",
+        "collection": "edges",
+        "index": 19,
+        "id": "sql_result-sql_fix",
+        "from": "sql_result",
+        "to": "sql_fix"
+      },
+      "evidence": {
+        "otherRelationship": {
+          "diagramType": "workflow",
+          "collection": "edges",
+          "index": 23,
+          "id": "sql_validate-sql_fix",
+          "from": "sql_validate",
+          "to": "sql_fix"
+        },
+        "overlapLengthPx": 12,
+        "minimumPx": 8,
+        "from": [
+          320.5,
+          414
+        ],
+        "to": [
+          332.5,
+          414
+        ],
+        "segmentIndex": 1,
+        "otherSegmentIndex": 1
+      },
+      "supportedFixes": [
+        "adjust route/via, bias, or channel coordinates so unrelated edges do not visually merge"
+      ]
+    },
+    {
+      "code": "layout/constraint",
+      "severity": "error",
+      "message": "Label \"revise text\" overlaps node \"summary_fix\" — adjust labelDx/labelDy/labelSegment or set labelAt.\n  label rect: [739, 967, 63, 14]\n  node \"summary_fix\" rect: [780, 961, 155, 52]\n  Suggested fix: set labelAt [770, 1027] or set labelDy 50 (below); or set labelAt [770, 953] or set labelDy -24 (above)",
+      "subject": {
+        "diagramType": "workflow"
+      }
+    },
+    {
+      "code": "composition/ambiguous-corridor",
+      "severity": "error",
+      "message": "[composition/ambiguous-corridor] showcase workflow edges[25] id \"summary-answer\" \"summary\" -> \"answer\" shares a 8px corridor with edges[27] id \"summary_fix-summary\" \"summary_fix\" -> \"summary\" at [760, 863] -> [768, 863] (segments 3 and 2; minimum 8px) — if the authored route/channelX/fromSide/toSide are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust route/via, bias, or channel coordinates so unrelated edges do not visually merge.",
+      "subject": {
+        "diagramType": "workflow",
+        "collection": "edges",
+        "index": 25,
+        "id": "summary-answer",
+        "from": "summary",
+        "to": "answer"
+      },
+      "evidence": {
+        "otherRelationship": {
+          "diagramType": "workflow",
+          "collection": "edges",
+          "index": 27,
+          "id": "summary_fix-summary",
+          "from": "summary_fix",
+          "to": "summary"
+        },
+        "overlapLengthPx": 8,
+        "minimumPx": 8,
+        "from": [
+          760,
+          863
+        ],
+        "to": [
+          768,
+          863
+        ],
+        "segmentIndex": 3,
+        "otherSegmentIndex": 2
+      },
+      "supportedFixes": [
+        "if the authored route/channelX/fromSide/toSide are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust route/via, bias, or channel coordinates so unrelated edges do not visually merge"
+      ]
+    }
+  ],
+  "diagnosticSummary": {
+    "total": 3,
+    "shown": 3,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-validation-repair-20261031-115627/validation-repair.finalize.json",
+    "summaryReceipt": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-validation-repair-20261031-115627/validation-repair.finalize-summary.json"
+  },
+  "update": {
+    "status": "update_available",
+    "installedVersion": "3.0.1",
+    "availableVersion": "3.2.0",
+    "releaseNotes": "https://github.com/tt-a1i/archify/releases/tag/v3.2.0",
+    "severity": "normal",
+    "checkedAt": "2026-10-31T06:27:06.102Z",
+    "source": "cache",
+    "noticeRequired": true,
+    "noticeText": "Archify update: 3.0.1 → 3.2.0. A previous check at 2026-10-31T06:27:06.102Z found a newer release. Release notes: https://github.com/tt-a1i/archify/releases/tag/v3.2.0. The installed Skill has not changed; ask to snooze or ignore this reminder.",
+    "eventKey": "archify@sha256:70e210265c59f24dcbdf2a502ff671104b5454e7ee7d3554aecd86bad32384f5"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 248,
+  "nextAction": {
+    "action": "edit-in-place",
+    "candidate": "/Users/rajatnigam/workspace/python_classes/sandbox_analysis/.archify/workflow-validation-repair-20261031-115627/candidate.json",
+    "constraint": "Preserve unaffected semantics and geometry; do not replace the whole candidate.",
+    "then": "finalize-once"
+  }
+}

@@ -3,14 +3,16 @@
 import json
 import re
 
-from pydantic_ai import Agent, ModelRetry, UsageLimits
+from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimits
 from pydantic_ai.models import Model
+from pydantic_ai.capabilities import ProcessHistory
 
 from domain_instructions import domain_context, get_domain_profile
 from execution import ExecutionResult
 from planning import ExecutionPlan
-from runtime import model_settings, result_preview, trace
+from runtime import calculation_preview, model_settings, result_preview, trace
 from summary_evidence import prepare_evidence
+from repair_feedback import RepairFeedback, repair_handoff_messages
 
 SUMMARY_INSTRUCTIONS = """
 Summarize the completed analysis for a business user. Use the injected workspace
@@ -43,6 +45,9 @@ Keep worker/software-version details in the trace unless the user asks for them.
 Some large SQL inputs may be marked rows_preview_only. Do not treat that preview
 as the complete population; use the complete Python outputs, stored_row_count and
 host-verified aggregates. Keep the final answer concise and avoid repeating data.
+Long raw scientific arrays may be marked raw_scientific_series_omitted. The
+computed estimates and interval bounds are supplied in full: copy those scalar
+metrics, do not derive new bounds from raw draws or replace them with guesses.
 """
 
 
@@ -63,8 +68,20 @@ async def summarize_result(
         )
     profile = get_domain_profile(plan.workspace_id, tenant_id=plan.tenant_id)
     evidence = prepare_evidence(execution, profile, question=question)
+    latest_repair = None
+    owned_handoffs = set()
+
+    def handoff(ctx: RunContext, messages):
+        return repair_handoff_messages(
+            messages,
+            latest_repair,
+            "Return only the corrected business answer using the supplied evidence. Remove unsupported claims; do not execute SQL/Python, change the plan or invent replacement numbers.",
+            owned_handoffs,
+        )
+
     agent = Agent(
         model,
+        capabilities=[ProcessHistory(handoff)],
         instructions=SUMMARY_INSTRUCTIONS
         + "\nWorkspace domain guidance:\n"
         + domain_context(
@@ -75,20 +92,48 @@ async def summarize_result(
     )
 
     @agent.output_validator
-    def keep_deferred_questions_separate(answer: str) -> str:
+    def keep_deferred_questions_separate(ctx: RunContext, answer: str) -> str:
+        def reject(message):
+            nonlocal latest_repair
+            trace(
+                "SUMMARY_REJECTED: " + json.dumps({"answer": answer, "error": message})
+            )
+            latest_repair = RepairFeedback(
+                target="summarizer",
+                phase="summary_validation",
+                diagnostic=message,
+                artifact={"rejected_answer": answer},
+                authority={
+                    "sql_results": {
+                        key: result_preview(value)
+                        for key, value in execution.sql_results.items()
+                    },
+                    "python_results": [
+                        calculation_preview(run.get("output"))
+                        for run in execution.python_runs
+                    ],
+                    "verified_aggregates": evidence.aggregates,
+                },
+                retries_remaining=max(0, 2 - ctx.retry),
+                instructions=[
+                    "Revise presentation only; do not regenerate SQL, Python or the plan."
+                ],
+            )
+            raise ModelRetry(latest_repair.publish())
+
         if plan.deferred_objectives and "?" in answer:
-            raise ModelRetry(
+            reject(
                 "Summarize completed results only; the application adds pending questions"
             )
         if profile.action_policies and profile.policy_absence_pattern:
             if re.search(profile.policy_absence_pattern, answer, re.IGNORECASE):
-                raise ModelRetry(
+                reject(
                     "Action policies were supplied. Do not claim they are absent; apply the provided rules to evidence"
                 )
         for topic, rule in profile.topic_scopes.items():
             if not re.search(rule.request_pattern, question, re.IGNORECASE):
                 if re.search(rule.answer_pattern, answer, re.IGNORECASE):
-                    raise ModelRetry(
+                    reject(
                         f"Remove unrequested {topic} commentary and disclaimers; answer only the requested results"
                     )
         unsupported = evidence.unsupported_values(answer)
@@ -97,7 +142,7 @@ async def summarize_result(
                 "SUMMARY validation retry: unsupported values "
                 + ", ".join(unsupported[:8])
             )
-            raise ModelRetry(
+            reject(
                 "Unsupported numeric/date values: "
                 + ", ".join(unsupported[:8])
                 + ". Remove the entire unsupported claim or copy an exact returned value to two decimals. Do not replace it with another guessed or coarsely rounded value. Answer only the requested metrics from python_results, SQL results or verified_aggregates; do not infer new totals."
@@ -117,7 +162,9 @@ async def summarize_result(
         "executed_queries": execution.queries,
         "verified_aggregates": evidence.aggregates,
         "executed_code_method_numbers": sorted(evidence.method_numbers),
-        "python_results": [run.get("output") for run in execution.python_runs],
+        "python_results": [
+            calculation_preview(run.get("output")) for run in execution.python_runs
+        ],
         "scientific_methods": [
             call
             for run in execution.python_runs
@@ -125,6 +172,7 @@ async def summarize_result(
             if call.get("status") == "completed"
         ],
         "completed_steps": execution.completed_steps,
+        "validation_receipts": execution.validation_receipts,
         "deferred_objectives": [o.model_dump() for o in plan.deferred_objectives],
     }
     return (

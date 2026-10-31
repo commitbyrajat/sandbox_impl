@@ -26,6 +26,29 @@ JOIN sw_amcs a ON a.amc_id=h.amc_id GROUP BY h.amc_id,a.amc_name ORDER BY total_
 
 
 class SummaryIntegrityTests(unittest.IsolatedAsyncioTestCase):
+    def test_bold_method_parameters_are_not_confused_with_monetary_results(self):
+        from summary_evidence import SummaryEvidence
+
+        evidence = SummaryEvidence(
+            numbers={Decimal("17.26"), Decimal("-6090.23")},
+            method_numbers={Decimal(42)},
+        )
+        self.assertEqual(
+            evidence.unsupported_values("Mean INR **17.26**, seed **42**."), []
+        )
+        self.assertIn("42", evidence.unsupported_values("Mean INR **42**."))
+        self.assertEqual(evidence.unsupported_values("A loss of **INR 6,090.23**."), [])
+        self.assertEqual(
+            evidence.unsupported_values("Losses of INR 6,090.23, seed (42)."), []
+        )
+        self.assertEqual(
+            evidence.unsupported_values("Losses of over INR 6,090.23."), []
+        )
+        self.assertIn("6,000", evidence.unsupported_values("Losses of over INR 6,000."))
+        self.assertIn(
+            "6,090.23", evidence.unsupported_values("Income of **INR 6,090.23**.")
+        )
+
     async def test_uncertainty_summary_retries_remove_unsupported_rounded_examples(
         self,
     ):
