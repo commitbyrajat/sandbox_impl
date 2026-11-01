@@ -19,3 +19,9 @@ artifacts/plans/
 artifacts/metricflow/
 artifacts/sql_stages/
 .idea/
+
+# React application dependencies and generated browser artifacts.
+ui/node_modules/
+ui/dist/
+ui/test-results/
+ui/playwright-report/

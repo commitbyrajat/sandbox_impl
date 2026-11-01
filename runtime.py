@@ -12,6 +12,7 @@ from pydantic_ai.exceptions import ModelAPIError
 
 from datasource_mapping import MODELS
 from main import ROOT
+from progress import CURRENT_STAGE, emit_progress
 
 TRACE_ENABLED: ContextVar[bool] = ContextVar("pipeline_trace_enabled", default=False)
 MAX_TOKENS_OVERRIDE: ContextVar[int | None] = ContextVar(
@@ -103,6 +104,13 @@ def model_error_detail(error: ModelAPIError) -> str:
     if isinstance(body, dict):
         body = body.get("message")
     detail = body if isinstance(body, str) else error.message
+    detail = redact_sensitive(detail)
+    status = getattr(error, "status_code", None)
+    label = f"HTTP {status}" if status is not None else type(error).__name__
+    return f"Model {error.model_name} ({label}): {detail[:1600]}"
+
+
+def redact_sensitive(detail: str) -> str:
     credential_names = {model.api_key_env for model in MODELS.values()}
     for name, value in os.environ.items():
         if (
@@ -114,12 +122,19 @@ def model_error_detail(error: ModelAPIError) -> str:
             detail = detail.replace(value, "[redacted]")
     detail = re.sub(r"sk-[A-Za-z0-9_-]+", "[redacted]", detail)
     detail = re.sub(r"(?i)Bearer\s+\S+", "Bearer [redacted]", detail)
-    status = getattr(error, "status_code", None)
-    label = f"HTTP {status}" if status is not None else type(error).__name__
-    return f"Model {error.model_name} ({label}): {detail[:1600]}"
+    detail = re.sub(r"(\w+://)[^\s/@]+:[^\s/@]+@", r"\1[redacted]@", detail)
+    return detail
 
 
 def trace(message: str) -> None:
+    if message.startswith(
+        ("TOOL ", "SQL_STAGE ", "REPAIR_ROUTE:", "GENERATION_HANDOFF:")
+    ):
+        emit_progress(
+            "activity",
+            stage=CURRENT_STAGE.get(),
+            message=redact_sensitive(message)[:1800],
+        )
     if TRACE_ENABLED.get():
         print(message, file=sys.stderr, flush=True)
 

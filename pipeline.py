@@ -32,6 +32,7 @@ from summarization import (
     summarize_result,
 )
 from calculation_contracts import validate_execution_result
+from progress import CURRENT_STAGE, emit_progress, stage_outcome
 
 
 @dataclass(frozen=True)
@@ -116,7 +117,9 @@ class PipelineStage(ABC):
         self, context: PipelineContext, *, forward: bool = True
     ) -> PipelineContext:
         token = TRACE_ENABLED.set(context.request.trace)
+        stage_token = CURRENT_STAGE.set(self.name)
         started = monotonic()
+        emit_progress("stage", stage=self.name, status="running")
         print(f"STAGE {self.name}: start", file=sys.stderr, flush=True)
         status = "failed"
         try:
@@ -143,12 +146,24 @@ class PipelineStage(ABC):
             status = "skipped" if self.name in context.skipped_stages else "completed"
         finally:
             context.stage_timings[self.name] = monotonic() - started
+            emit_progress(
+                "stage",
+                stage=self.name,
+                status=status,
+                duration_seconds=context.stage_timings[self.name],
+                outcome=(
+                    stage_outcome(self.name, context)
+                    if status in ("completed", "skipped")
+                    else {}
+                ),
+            )
             print(
                 f"STAGE {self.name}: end ({status}, {context.stage_timings[self.name]:.1f}s)",
                 file=sys.stderr,
                 flush=True,
             )
             TRACE_ENABLED.reset(token)
+            CURRENT_STAGE.reset(stage_token)
         if status != "skipped":
             context.completed_stages.append(self.name)
         if forward and self.next_stage is not None and not context.stopped:

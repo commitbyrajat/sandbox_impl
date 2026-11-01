@@ -1,5 +1,37 @@
 # Query the sample datasets with DataFusion Python
 
+## React analysis workspace
+
+The Yarn-managed React application in [`ui`](ui/README.md) provides tenant/workspace
+selection, business questions, live progress through all eight pipeline stages,
+SQL sub-stage activity, expandable outcomes and a final Markdown answer. It uses
+the supplied HDFC logo's red/navy palette; [logo analysis](ui/BRAND.md) documents
+the preserved source asset and vector header mark.
+
+Start the Python API from the repository root:
+
+```sh
+uv sync
+uv run uvicorn api:app --host 127.0.0.1 --port 8010
+```
+
+Then start React in a second terminal:
+
+```sh
+cd ui
+yarn install --frozen-lockfile
+yarn dev
+```
+
+Open **http://127.0.0.1:5173**. The API exposes `GET /api/tenants`,
+`GET /api/tenants/{id}/workspaces` and `POST /api/questions/stream`; API docs are at
+**http://127.0.0.1:8010/docs**. The stream runs the same pipeline as the CLI and
+reports actual stage outcomes and correction attempts. It does not simulate
+progress or send model-provider credentials to the browser. For a build served
+directly by Python, test commands and event details, see the [UI guide](ui/README.md).
+
+## Sample data and direct SQL
+
 ```sh
 docker compose -f data/container/docker-compose.yml up -d --wait
 uv sync
