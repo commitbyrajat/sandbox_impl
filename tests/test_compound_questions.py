@@ -8,6 +8,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from test_agent import executable_plan, structured_response, tool_returns
 from test_support import ask
+from semantic_fixtures import holdings_query
 
 from agent import classify_question
 from datasource_mapping import classification_context
@@ -103,9 +104,7 @@ class CompoundQuestionTests(unittest.IsolatedAsyncioTestCase):
                             "run_sql",
                             {
                                 "step_id": "s2",
-                                "statement": "SELECT a.amc_name, sum(h.market_value) AS market_value_inr, "
-                                "max(h.nav_date) AS nav_date FROM sw_holdings h "
-                                "JOIN sw_amcs a ON h.amc_id=a.amc_id GROUP BY a.amc_name ORDER BY a.amc_name",
+                                "query": holdings_query("market_value_inr", date=True),
                             },
                         )
                     ]

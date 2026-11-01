@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, TypeAdapter
+from external_module_models import (
+    NumpyRequest,
+    NumpyRandomRequest,
+    PandasRequest,
+    module_catalog,
+)
 
 ROOT = Path(__file__).resolve().parent
 Number = int | FiniteFloat | Decimal
@@ -96,6 +102,14 @@ class BernoulliRequest(Request):
     size: Positive = 1000
 
 
+class BernoulliSumRequest(Request):
+    operation: Literal["bernoulli_sum"] = "bernoulli_sum"
+    probabilities: list[Annotated[FiniteFloat, Field(ge=0, le=1)]]
+    weights: list[Number]
+    n_simulations: Positive = 1000
+    quantile: Annotated[FiniteFloat, Field(ge=0, le=1)] = 0.95
+
+
 class ResampleRequest(Request):
     operation: Literal["resample_indices"] = "resample_indices"
     n_observations: Positive
@@ -118,11 +132,29 @@ ScientificRequest = Annotated[
     | SampleRequest
     | BinomialRequest
     | BernoulliRequest
+    | BernoulliSumRequest
     | ResampleRequest
     | MonteCarloTestRequest,
+    # Library facades share the same validated worker protocol and budgets.
+    # Public scientific operations below retain their original signatures.
     Field(discriminator="operation"),
 ]
-REQUEST_ADAPTER = TypeAdapter(ScientificRequest)
+REQUEST_ADAPTER = TypeAdapter(
+    Annotated[
+        KMeansRequest
+        | BootstrapRequest
+        | SampleRequest
+        | BinomialRequest
+        | BernoulliRequest
+        | BernoulliSumRequest
+        | ResampleRequest
+        | MonteCarloTestRequest
+        | NumpyRequest
+        | NumpyRandomRequest
+        | PandasRequest,
+        Field(discriminator="operation"),
+    ]
+)
 REQUEST_TYPES = {
     model.model_fields["operation"].default: model
     for model in (
@@ -131,13 +163,14 @@ REQUEST_TYPES = {
         SampleRequest,
         BinomialRequest,
         BernoulliRequest,
+        BernoulliSumRequest,
         ResampleRequest,
         MonteCarloTestRequest,
     )
 }
 
 
-def scientific_catalog(*, include_limits=False) -> dict:
+def scientific_catalog(*, include_limits=False, include_external=True) -> dict:
     document = json.loads((ROOT / "scientific_capabilities.json").read_text())
     if set(document["operations"]) != set(REQUEST_TYPES):
         raise ValueError(
@@ -147,6 +180,8 @@ def scientific_catalog(*, include_limits=False) -> dict:
         document["effective_limits"] = (
             ScientificSettings.from_environment().model_dump()
         )
+    if include_external:
+        document["external_modules"] = module_catalog(compact=True)
     return document
 
 

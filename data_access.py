@@ -20,6 +20,7 @@ from datasource_mapping import (
 from main import create_context
 from planning import ExecutionPlan
 from result_contracts import SQLResultContract, validate_result_contract
+from sql_staging import plan_sql_stages, staged_frame, validate_workspace_sql
 
 MAX_ROWS = 200
 
@@ -75,11 +76,39 @@ class DataSources:
                         )
 
     def query(
-        self, statement: str, *, contract: SQLResultContract | None = None
+        self,
+        statement: str,
+        *,
+        contract: SQLResultContract | None = None,
+        stage_plan=None,
+        bindings=None,
     ) -> dict[str, Any]:
         """Read only routed tables, resolving CTEs by scope to prevent name bypasses."""
-        if len(statement) > 20_000:
-            raise ValueError("SQL must be at most 20,000 characters")
+        stage_plan = stage_plan or plan_sql_stages(statement)
+        if stage_plan.staged:
+            validate_workspace_sql(statement, set(self.tables))
+            schemas = {name: self.context.table(name).schema() for name in self.tables}
+            if bindings is None:
+                from sql_joins import configured_joins
+                from domain_instructions import get_domain_profile
+
+                scope = resolve_scope(self.tenant_id, self.workspace_id)
+                profile = get_domain_profile(
+                    self.workspace_id, tenant_id=self.tenant_id
+                )
+                bindings = configured_joins(
+                    scope.workspace.sources, profile.join_semantics
+                )
+            with staged_frame(self.context, stage_plan, schemas, bindings) as (
+                frame,
+                checked,
+                receipts,
+            ):
+                result = self._store_frame(statement, frame, contract)
+                self.queries[-1:] = [stage.statement for stage in stage_plan.stages]
+                result["sql_stages"] = receipts
+                result["sql_validation"] = checked.model_dump()
+                return result
         statements = sqlglot.parse(statement, read="postgres")
         if len(statements) != 1 or not isinstance(statements[0], exp.Query):
             raise ValueError("Only one SELECT query (optionally with CTEs) is allowed")
@@ -103,6 +132,10 @@ class DataSources:
             .with_allow_statements(False)
         )
         frame = self.context.sql(statement, options=options)
+        return self._store_frame(statement, frame, contract)
+
+    def _store_frame(self, statement, frame, contract):
+        """Commit only the final result, after all its result checks succeed."""
         rows = frame.limit(MAX_ROWS + 1).to_pylist()
         result_id = f"query_{self.next_result_number}"
         schema = frame.schema()

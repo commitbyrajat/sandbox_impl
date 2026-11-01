@@ -19,8 +19,12 @@ class ResultColumn(BaseModel):
 class PopulationContract(BaseModel):
     model_config = ConfigDict(extra="forbid")
     table: str
-    source_key: str
-    result_key: str
+    source_key: str = Field(
+        description="Registered entity identity column, never a monetary measure or arbitrary grouping value."
+    )
+    result_key: str = Field(
+        description="Output alias of that same entity identity in grain; never a measure, balance or date substituted for a compound key."
+    )
 
 
 class SQLResultContract(BaseModel):
@@ -29,17 +33,22 @@ class SQLResultContract(BaseModel):
     grain: list[str] = Field(default_factory=list)
     min_rows: int = Field(default=0, ge=0)
     max_rows: int | None = Field(default=None, ge=0)
-    population: PopulationContract | None = None
+    population: PopulationContract | None = Field(
+        default=None,
+        description="Use null for filtered cohorts, composite origin keys, scalar aggregates and ordinary grouped reports. Set an object only to preserve a whole registered entity population identified by a single key (e.g. every registered customer). Do not invent a population identity for a measure/date.",
+    )
 
     @model_validator(mode="after")
     def valid_keys(self):
         if set(self.grain) - self.required_columns.keys():
-            raise ValueError("Every grain key must be a required output column")
+            raise ValueError(
+                f"Every grain key must be a required output column; missing={sorted(set(self.grain)-self.required_columns.keys())!r}, required_columns={list(self.required_columns)!r}, grain={self.grain!r}. Use the same output aliases in dimensions, grain and required_columns."
+            )
         if self.max_rows is not None and self.max_rows < self.min_rows:
             raise ValueError("max_rows must be at least min_rows")
         if self.population and self.population.result_key not in self.grain:
             raise ValueError(
-                f"Population result_key={self.population.result_key!r} must be an observation identity from grain={self.grain!r}. Set result_key to one of those grain fields, not a measure or its alias."
+                f"Population result_key={self.population.result_key!r} must be an observation identity from grain={self.grain!r}. For filtered/composite cohort analysis set population=null; do not try another measure/date/grouping field. Use an object only for whole registered entities with a single identity key, such as customers. Preserve the requested observation grain."
             )
         return self
 

@@ -26,7 +26,11 @@ from runtime import (
     summarization_enabled,
     trace,
 )
-from summarization import append_clarifications, summarize_result
+from summarization import (
+    append_clarifications,
+    render_calculation_results,
+    summarize_result,
+)
 from calculation_contracts import validate_execution_result
 
 
@@ -293,7 +297,7 @@ class SummarizeStage(PipelineStage):
         if not context.summarization_enabled:
             context.skipped_stages.append(self.name)
             answer = (
-                context.execution.draft
+                render_calculation_results(context.execution)
                 if context.execution is not None
                 else plan.response or ""
             )

@@ -25,7 +25,8 @@
         "revolve yield": "Annual interest yield on revolving ANR, stored as annual_revolve_yield.",
         "transactor share": "Balance-based share of total ANR that is non-revolving, stored as decimal transactor_share. Revolving ANR = total ANR * (1 - transactor share).",
         "transactor_share_pct_pt_change": "Absolute change in percentage points: +5 means add 0.05 to transactor_share, NOT multiply the share by 1.05.",
-        "portfolio margin": "By default, annualized net interest margin (NIM): SUM(interest income - funding cost) / SUM(total ANR * days/365). It is not PAT or contribution-profit margin."
+        "portfolio margin": "By default, annualized net interest margin (NIM): SUM(interest income - funding cost) / SUM(total ANR * days/365). It is not PAT or contribution-profit margin.",
+        "loss level exceeded in only 5% of scenarios": "The 95th percentile of the loss outcome distribution. This is not a 95% confidence interval for expected loss; discrete outcomes and ties may produce fewer than 5% strictly above the threshold."
       },
       "common_instructions": [
         "This workspace contains entirely synthetic credit card data from January-June 2026.",
@@ -81,9 +82,9 @@
         "These scenarios are deterministic arithmetic and can run in SQL. Reference templates are queries/credit_cards/scenarios/10_flat_cost_pat.sql and 11_portfolio_nim.sql; their input CTE numbers are examples, not user defaults. Parameter values in the actual question override those examples. Cast intermediate money/rate expressions to bounded decimal precision before summing or dividing to avoid Decimal128 overflow.",
         "For the configured portfolio NIM recipe, use its checked row-level SQL unchanged with the actual question parameters. A configured recipe plan is published with source hash before execution. Other wording or extra filters/objectives continue through normal planning; never silently discard those constraints.",
         "For uncertainty in average PAT per customer: use latest-month PAT summed by whole customer, include all registered customers (zero where appropriate), then run a 1000-resample customer bootstrap with seed 42 and nearest-rank 2.5th/97.5th percentile bounds in Python. Report the observed mean separately. This customer-mix question requires sql_python; do not substitute normal-theory SQL intervals or daily-spending observations. Use await scientific.bootstrap for the library calculation and compute the observed mean from original Decimal PAT rows. Publish the float64 interval precision and NumPy RNG; seed 42 does not reproduce the earlier Python random stream.",
-        "For expected next-month credit loss and a loss exceeded in only 5% of scenarios: use sql_python. SQL prepares latest non-default exposures and matching conditional default transition probabilities/LGD by variant/segment/currency/from_bucket. Python performs 1000 independent block-default simulations with seed 42 and returns mean and nearest-rank 95th-percentile loss. Each exposure block defaults in full or not at all; exclude existing defaults. Publish this coarse fixed-book assumption, not borrower-level predictive validity. This distribution request overrides the simple expected-loss SQL-only default. Prefer one batched await scientific.sample(\"bernoulli\", {\"p\": probabilities}, size=[1000, cohort_count], seed=42) call, then calculate losses from original Decimal exposures/LGD in Monty. Use a different stream for independent batches. This outcome simulation is not scientific.monte_carlo_test.",
+        "For expected next-month credit loss and a loss exceeded in only 5% of scenarios: use sql_python. SQL prepares latest non-default exposures and matching conditional default transition probabilities/LGD by variant/segment/currency/from_bucket. Python performs 1000 independent block-default simulations with seed 42 and returns mean and nearest-rank 95th-percentile loss. Each exposure block defaults in full or not at all; exclude existing defaults. Publish this coarse fixed-book assumption, not borrower-level predictive validity. This distribution request overrides the simple expected-loss SQL-only default. Prefer one batched await scientific.sample(\"bernoulli\", {\"p\": probabilities}, size=[1000, cohort_count], seed=42) call, then calculate losses from original Decimal exposures/LGD in Monty. Use a different stream for independent batches. This outcome simulation is not scientific.monte_carlo_test. Select semantic metrics exposure_amount, probability_of_default (horizon one_month) and loss_given_default at the complete origin-cohort grain. Opening cohort balances only define PD; they are not a substitute for current exposure_amount. Use latest_common snapshot keys from the data, without a fabricated month-end equality. A discrete 95th percentile need not have exactly 5% strictly above it.",
         "For roughly balanced customer review groups, use sql_python: aggregate approved INR net spend per registered customer in SQL, preserve negative refunds and zero-spend customers, then assign whole customers largest-first to the group with lowest running spend in Python. Customer-ID and group-number tie breaks apply. Use requested Jan-June dates; output members, totals and the gap. Disclose approximate grouping, not optimal allocation.",
-        "For three customer segments with similar per-card spending, profitability and operating cost, use sql_python. SQL prepares one row per customer for latest-month SUM(profit_inr)/distinct cards, SUM(approved_net_spend_inr)/distinct cards and SUM(opex_inr)/distinct cards. Sort rows by customer ID in Monty and call await scientific.kmeans(feature_matrix, clusters=3, standardize=True, initialization=\"farthest_first\", max_iterations=50, seed=42). The SciPy worker standardizes with population standard deviation, ignores constant dimensions and performs the iterative clustering. Initialize deterministically: lowest customer ID first, then the point farthest from its nearest chosen center with customer-ID tie breaks. Retain the previous center for empty clusters; disclose fewer than three distinct profiles instead of inventing differences. Return members, counts, convergence/warnings and typical feature values in original units. Use returned labels to recompute monetary cluster means from original Decimal rows in Monty. The worker uses SciPy; direct SciPy/scikit-learn imports inside Monty are not available.",
+        "For three customer segments with similar per-card spending, profitability and operating cost, use sql_python. SQL prepares one row per customer for latest-month SUM(profit_inr)/distinct cards, SUM(approved_net_spend_inr)/distinct cards and SUM(opex_inr)/distinct cards. Sort rows by customer ID in Monty and call await scientific.kmeans(feature_matrix, clusters=3, standardize=True, initialization=\"farthest_first\", max_iterations=50, seed=42). The SciPy worker standardizes with population standard deviation, ignores constant dimensions and performs the iterative clustering. Initialize deterministically: lowest customer ID first, then the point farthest from its nearest chosen center with customer-ID tie breaks. Retain the previous center for empty clusters; disclose fewer than three distinct profiles instead of inventing differences. Return members, counts, convergence/warnings and typical feature values in original units. Use returned labels to recompute monetary cluster means from original Decimal rows in Monty. The worker uses SciPy. The registered async numpy/pandas/scipy facades are available, but native ndarray/DataFrame objects, arbitrary package APIs and scikit-learn imports are unavailable.",
         "For the four configured business-question families above, combine related Python outputs in one step after SQL preparation. These defaults supply the implementation; they must not be requested from the business user. Publish the method and synthetic-data limitations. Explicit user business constraints take priority."
       ],
       "executor_instructions": [
@@ -332,6 +333,237 @@
             "Preserve the selected-period contract: with no explicit user period, PAT is measured for the latest financial month, not pooled across all months. Return that month and one PAT observation for every cc_customers.customer_id using configured joins. Use SQL aliases/types actually returned.",
             "Use await scientific.bootstrap on customer PAT values, statistic=\"mean\", n_resamples=1000, confidence_level=0.95, method=\"percentile\", quantile_method=\"nearest_rank\", seed=42. Compute the observed mean with original Decimal SQL values and return lower/upper bounds plus method metadata. Do not require the finite bootstrap distribution mean to equal the observed mean."
           ]
+        },
+        "credit_loss_distribution": {
+          "request_pattern": "(?s)(?=.*\\b(?:credit\\s+loss(?:es)?|credit\\s+cost)\\b)(?=.*(?:scenarios?|simulat\\w*|percentile|5\\s*%)).+",
+          "planner_instructions": [
+            "The default simulation observation is one monthly non-default origin cohort, not one aggregated variant or segment. Preserve every configured origin-grain key, including delinquency bucket and month. The configured observation policy binds that grain before publication. Use exposure_amount, probability_of_default and loss_given_default; combine them in one complete SQL input when possible.",
+            "Use calculation.method scientific.bernoulli_sum. Its inputs are each cohort probability_of_default and event weight exposure_amount*loss_given_default. It computes exactly one portfolio total per scenario and reports the analytical expected loss, finite-simulation mean and nearest-rank 95th percentile separately."
+          ],
+          "executor_instructions": [
+            "Read the complete cohort rows, use one batched seeded Bernoulli sampling call, multiply defaults by current exposure_amount and loss_given_default, and report the simulation mean and nearest-rank 95th percentile. Do not pool delinquency buckets into a single default event.",
+            "Use result = await scientific.bernoulli_sum(probabilities, weights, n_simulations=1000, quantile=0.95, seed=42). Return expected_loss=result['expected_value'], simulated_mean=result['simulated_mean'], loss_95th_percentile=result['quantile'], and method=result['method']. Do not sum all draws within each cohort and then average cohort totals."
+          ],
+          "observation_policy": {
+            "table": "cc_delinquency_monthly",
+            "metrics": [
+              "exposure_amount",
+              "loss_given_default",
+              "probability_of_default"
+            ],
+            "min_rows": 1,
+            "calculation_method": "scientific.bernoulli_sum",
+            "identity_aliases": ["cohort_key"]
+          }
+        }
+      },
+      "semantic_metrics": {
+        "approved_net_spending": {
+          "table": "cc_transactions",
+          "column": "amount",
+          "description": "Signed approved INR purchases and refunds.",
+          "filters": [
+            {
+              "field": {
+                "table": "cc_transactions",
+                "column": "status"
+              },
+              "operator": "eq",
+              "value": "APPROVED"
+            },
+            {
+              "field": {
+                "table": "cc_transactions",
+                "column": "currency"
+              },
+              "operator": "eq",
+              "value": "INR"
+            }
+          ]
+        },
+        "customer_count": {
+          "table": "cc_customers",
+          "column": "customer_id",
+          "description": "Distinct registered customers.",
+          "aggregation": "count_distinct"
+        },
+        "card_count": {
+          "table": "cc_credit_cards",
+          "column": "card_id",
+          "description": "Distinct issued cards, including zero-spend cards.",
+          "aggregation": "count_distinct"
+        },
+        "spending": {
+          "table": "cc_monthly_financials",
+          "column": "approved_net_spend_inr",
+          "description": "Approved INR net spending in the selected financial period."
+        },
+        "profitability": {
+          "table": "cc_monthly_financials",
+          "column": "profit_inr",
+          "description": "Pre-tax profitability in the selected financial period."
+        },
+        "pat": {
+          "table": "cc_monthly_financials",
+          "column": "pat_inr",
+          "description": "Profit after tax in the selected financial period."
+        },
+        "operating_cost": {
+          "table": "cc_monthly_financials",
+          "column": "opex_inr",
+          "description": "Operating expense in the selected financial period."
+        },
+        "exposure_amount": {
+          "table": "cc_delinquency_monthly",
+          "column": "balance_inr",
+          "description": "Latest non-default origin cohort exposure; filter dpd_bucket != DEFAULT. Current non-default exposure at risk for next-month losses; multiply this metric by LGD on a default draw, not the prior opening-balance denominator.",
+          "required_filters": [
+            {
+              "field": {
+                "table": "cc_delinquency_monthly",
+                "column": "dpd_bucket"
+              },
+              "operator": "ne",
+              "value": "DEFAULT"
+            }
+          ]
+        },
+        "loss_given_default": {
+          "table": "cc_delinquency_monthly",
+          "column": "loss_given_default",
+          "description": "Loss severity attached to each delinquency origin cohort."
+        },
+        "origin_opening_balance": {
+          "table": "cc_roll_rates_monthly",
+          "column": "cohort_opening_balance_inr",
+          "description": "One consistent opening balance per monthly origin cohort, never summed across destinations."
+        },
+        "defaulted_balance": {
+          "table": "cc_roll_rates_monthly",
+          "column": "transitioned_balance_inr",
+          "description": "Observed transitions into DEFAULT in the same one-month origin cohort.",
+          "filters": [
+            {
+              "field": {
+                "table": "cc_roll_rates_monthly",
+                "column": "to_bucket"
+              },
+              "operator": "eq",
+              "value": "DEFAULT"
+            }
+          ]
+        },
+        "probability_of_default": {
+          "description": "One-month conditional probability of a new default among non-default origin cohorts, weighted by origin opening balance. Zero origin denominator is undefined (NULL). Existing DEFAULT cohorts are excluded.",
+          "formula": {
+            "op": "divide",
+            "args": [
+              {
+                "op": "ref",
+                "name": "pd_new_defaulted_balance"
+              },
+              {
+                "op": "ref",
+                "name": "pd_origin_opening_balance"
+              }
+            ]
+          },
+          "horizon": "one_month",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "spending_per_card": {
+          "description": "spending divided by distinct registered cards at the selected output grain; undefined for no cards.",
+          "formula": {
+            "op": "divide",
+            "args": [
+              {
+                "op": "ref",
+                "name": "spending"
+              },
+              {
+                "op": "ref",
+                "name": "card_count"
+              }
+            ]
+          }
+        },
+        "profitability_per_card": {
+          "description": "profitability divided by distinct registered cards at the selected output grain; undefined for no cards.",
+          "formula": {
+            "op": "divide",
+            "args": [
+              {
+                "op": "ref",
+                "name": "profitability"
+              },
+              {
+                "op": "ref",
+                "name": "card_count"
+              }
+            ]
+          }
+        },
+        "opex_per_card": {
+          "description": "operating_cost divided by distinct registered cards at the selected output grain; undefined for no cards.",
+          "formula": {
+            "op": "divide",
+            "args": [
+              {
+                "op": "ref",
+                "name": "operating_cost"
+              },
+              {
+                "op": "ref",
+                "name": "card_count"
+              }
+            ]
+          }
+        },
+        "cumulative_approved_net_spending": {
+          "description": "Running approved INR net spending, with each period reported at its end; uses all available prior history unless an explicit rolling window is configured.",
+          "cumulative": {
+            "input_metric": "approved_net_spending",
+            "period_aggregation": "last"
+          }
+        },
+        "pd_origin_opening_balance": {
+          "description": "One validated opening balance per non-default origin cohort; the DEFAULT absorbing state contributes zero. This is the probability denominator, not the current exposure at risk; use exposure_amount for forecast loss severity.",
+          "table": "cc_roll_rates_monthly",
+          "column": "cohort_opening_balance_inr",
+          "filters": [
+            {
+              "field": {
+                "table": "cc_roll_rates_monthly",
+                "column": "from_bucket"
+              },
+              "operator": "ne",
+              "value": "DEFAULT"
+            }
+          ]
+        },
+        "pd_new_defaulted_balance": {
+          "description": "Observed flows from non-default origin cohorts into DEFAULT during one month. Existing default cohorts contribute zero.",
+          "table": "cc_roll_rates_monthly",
+          "column": "transitioned_balance_inr",
+          "filters": [
+            {
+              "field": {
+                "table": "cc_roll_rates_monthly",
+                "column": "from_bucket"
+              },
+              "operator": "ne",
+              "value": "DEFAULT"
+            },
+            {
+              "field": {
+                "table": "cc_roll_rates_monthly",
+                "column": "to_bucket"
+              },
+              "operator": "eq",
+              "value": "DEFAULT"
+            }
+          ]
         }
       }
     },
@@ -525,6 +757,138 @@
           "aggregation_rules": [
             "AMC holding value is the sum of holding market values. Count distinct schemes and folios at AMC level."
           ]
+        }
+      },
+      "semantic_metrics": {
+        "holding_value": {
+          "table": "sw_holdings",
+          "column": "market_value",
+          "description": "Holding market value in INR at the supplied NAV date."
+        },
+        "folio_count": {
+          "table": "sw_holdings",
+          "column": "folio_id",
+          "description": "Distinct holding folios at the requested output grain.",
+          "aggregation": "count_distinct"
+        },
+        "scheme_count": {
+          "table": "sw_holdings",
+          "column": "scheme_id",
+          "description": "Distinct held schemes at the requested output grain.",
+          "aggregation": "count_distinct"
+        },
+        "valuation_date": {
+          "table": "sw_holdings",
+          "column": "nav_date",
+          "description": "One common valuation date; mixed dates fail consistency checks.",
+          "aggregation": "constant"
+        },
+        "customer_count": {
+          "table": "sw_customers",
+          "column": "customer_id",
+          "description": "Distinct registered customers.",
+          "aggregation": "count_distinct"
+        },
+        "purchases": {
+          "table": "sw_transactions",
+          "column": "amount",
+          "description": "Completed PURCHASE amount in INR.",
+          "filters": [
+            {
+              "field": {
+                "table": "sw_transactions",
+                "column": "status"
+              },
+              "operator": "eq",
+              "value": "COMPLETED"
+            },
+            {
+              "field": {
+                "table": "sw_transactions",
+                "column": "transaction_type"
+              },
+              "operator": "eq",
+              "value": "PURCHASE"
+            }
+          ]
+        },
+        "sips": {
+          "table": "sw_transactions",
+          "column": "amount",
+          "description": "Completed SIP amount in INR.",
+          "filters": [
+            {
+              "field": {
+                "table": "sw_transactions",
+                "column": "status"
+              },
+              "operator": "eq",
+              "value": "COMPLETED"
+            },
+            {
+              "field": {
+                "table": "sw_transactions",
+                "column": "transaction_type"
+              },
+              "operator": "eq",
+              "value": "SIP"
+            }
+          ]
+        },
+        "redemptions": {
+          "table": "sw_transactions",
+          "column": "amount",
+          "description": "Completed REDEMPTION amount in INR.",
+          "filters": [
+            {
+              "field": {
+                "table": "sw_transactions",
+                "column": "status"
+              },
+              "operator": "eq",
+              "value": "COMPLETED"
+            },
+            {
+              "field": {
+                "table": "sw_transactions",
+                "column": "transaction_type"
+              },
+              "operator": "eq",
+              "value": "REDEMPTION"
+            }
+          ]
+        },
+        "net_inflow": {
+          "description": "Completed purchases plus SIPs minus redemptions in INR.",
+          "formula": {
+            "op": "subtract",
+            "args": [
+              {
+                "op": "add",
+                "args": [
+                  {
+                    "op": "ref",
+                    "name": "purchases"
+                  },
+                  {
+                    "op": "ref",
+                    "name": "sips"
+                  }
+                ]
+              },
+              {
+                "op": "ref",
+                "name": "redemptions"
+              }
+            ]
+          }
+        },
+        "cumulative_purchases": {
+          "description": "Running completed PURCHASE amounts in INR, reported at the end of each period. SIPs and redemptions remain separate metrics.",
+          "cumulative": {
+            "input_metric": "purchases",
+            "period_aggregation": "last"
+          }
         }
       }
     }

@@ -153,7 +153,16 @@
                       "dpd_bucket",
                       "from_bucket"
                     ]
-                  ]
+                  ],
+                  "required_preaggregation": {
+                    "cc_roll_rates_monthly": [
+                      "month",
+                      "variant_id",
+                      "segment",
+                      "currency",
+                      "from_bucket"
+                    ]
+                  }
                 }
               },
               "columns": {
@@ -581,10 +590,375 @@
                     "nullable": true
                   }
                 }
+              },
+              "semantic_tables": {
+                "cc_customers": {
+                  "grain": [
+                    "customer_id"
+                  ],
+                  "primary_key": [
+                    "customer_id"
+                  ],
+                  "measures": {}
+                },
+                "cc_credit_cards": {
+                  "grain": [
+                    "card_id"
+                  ],
+                  "primary_key": [
+                    "card_id"
+                  ],
+                  "measures": {
+                    "credit_limit": {
+                      "aggregation": "sum",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    }
+                  }
+                },
+                "cc_transactions": {
+                  "grain": [
+                    "transaction_id"
+                  ],
+                  "primary_key": [
+                    "transaction_id"
+                  ],
+                  "measures": {
+                    "amount": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    }
+                  },
+                  "snapshot_column": "transaction_timestamp"
+                },
+                "cc_products": {
+                  "grain": [
+                    "variant_id"
+                  ],
+                  "primary_key": [
+                    "variant_id"
+                  ],
+                  "measures": {
+                    "annual_interest_rate": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "annual_funding_rate": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "annual_credit_cost_rate": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "monthly_fee_inr": {
+                      "aggregation": "constant",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "fixed_opex_per_card_inr": {
+                      "aggregation": "constant",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "interchange_rate": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "rewards_rate": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "variable_opex_rate": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "network_cost_rate": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "loss_given_default": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "transactor_share": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "tax_rate": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    }
+                  }
+                },
+                "cc_card_profiles": {
+                  "grain": [
+                    "card_id"
+                  ],
+                  "primary_key": [
+                    "card_id"
+                  ],
+                  "measures": {}
+                },
+                "cc_monthly_financials": {
+                  "grain": [
+                    "month",
+                    "card_id"
+                  ],
+                  "primary_key": [
+                    "month",
+                    "card_id"
+                  ],
+                  "measures": {
+                    "days_in_period": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "day_count_basis": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "approved_net_spend_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "average_receivables_inr": {
+                      "aggregation": "sum",
+                      "description": "Snapshot balance, additive across cards within a month; never sum balances across months.",
+                      "non_additive_over": [
+                        "month"
+                      ]
+                    },
+                    "funded_balance_inr": {
+                      "aggregation": "sum",
+                      "description": "Snapshot balance, additive across cards within a month; never sum balances across months.",
+                      "non_additive_over": [
+                        "month"
+                      ]
+                    },
+                    "annual_funding_rate": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "annual_credit_cost_rate": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "interest_income_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "fee_income_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "interchange_income_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "funding_cost_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "fixed_opex_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "variable_opex_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "rewards_cost_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "network_cost_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "credit_cost_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "total_revenue_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "opex_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "total_cost_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "profit_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "ending_net_receivables_inr": {
+                      "aggregation": "sum",
+                      "description": "Snapshot balance, additive across cards within a month; never sum balances across months.",
+                      "non_additive_over": [
+                        "month"
+                      ]
+                    },
+                    "average_net_receivables_inr": {
+                      "aggregation": "sum",
+                      "description": "Snapshot balance, additive across cards within a month; never sum balances across months.",
+                      "non_additive_over": [
+                        "month"
+                      ]
+                    },
+                    "transactor_share": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "revolve_rate": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "revolving_enr_inr": {
+                      "aggregation": "sum",
+                      "description": "Snapshot balance, additive across cards within a month; never sum balances across months.",
+                      "non_additive_over": [
+                        "month"
+                      ]
+                    },
+                    "revolving_anr_inr": {
+                      "aggregation": "sum",
+                      "description": "Snapshot balance, additive across cards within a month; never sum balances across months.",
+                      "non_additive_over": [
+                        "month"
+                      ]
+                    },
+                    "transactor_anr_inr": {
+                      "aggregation": "sum",
+                      "description": "Snapshot balance, additive across cards within a month; never sum balances across months.",
+                      "non_additive_over": [
+                        "month"
+                      ]
+                    },
+                    "annual_revolve_yield": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "tax_rate": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "pbt_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "tax_expense_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "pat_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "spend_linked_revenue_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "spend_linked_cost_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    }
+                  },
+                  "snapshot_column": "month"
+                },
+                "cc_delinquency_monthly": {
+                  "grain": [
+                    "month",
+                    "variant_id",
+                    "segment",
+                    "currency",
+                    "dpd_bucket"
+                  ],
+                  "primary_key": [
+                    "month",
+                    "variant_id",
+                    "segment",
+                    "currency",
+                    "dpd_bucket"
+                  ],
+                  "measures": {
+                    "balance_inr": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation.",
+                      "non_additive_over": [
+                        "month"
+                      ]
+                    },
+                    "loss_given_default": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    }
+                  },
+                  "snapshot_column": "month"
+                },
+                "cc_roll_rates_monthly": {
+                  "grain": [
+                    "month",
+                    "variant_id",
+                    "segment",
+                    "currency",
+                    "from_bucket",
+                    "to_bucket"
+                  ],
+                  "primary_key": [
+                    "month",
+                    "variant_id",
+                    "segment",
+                    "currency",
+                    "from_bucket",
+                    "to_bucket"
+                  ],
+                  "measures": {
+                    "cohort_opening_balance_inr": {
+                      "aggregation": "sum",
+                      "non_additive_over": [
+                        "to_bucket"
+                      ],
+                      "consistency": "constant_per_preaggregation_grain",
+                      "null_policy": "reject",
+                      "description": "Opening balance repeats for every destination; validate consistency then use one balance per monthly origin cohort."
+                    },
+                    "transitioned_balance_inr": {
+                      "aggregation": "sum",
+                      "additive_over": [
+                        "to_bucket"
+                      ],
+                      "null_policy": "reject",
+                      "description": "Destination-transition balance; sum selected destination events once per origin cohort."
+                    }
+                  },
+                  "snapshot_column": "month",
+                  "reconciliations": [
+                    {
+                      "group_by": [
+                        "month",
+                        "variant_id",
+                        "segment",
+                        "currency",
+                        "from_bucket"
+                      ],
+                      "sum_column": "transitioned_balance_inr",
+                      "constant_column": "cohort_opening_balance_inr",
+                      "tolerance": 0.01
+                    }
+                  ]
+                }
               }
             }
           },
-          "domain_profile": "credit_cards"
+          "domain_profile": "credit_cards",
+          "semantic_planner": {
+            "backend": "metricflow",
+            "unsupported": "catalog",
+            "time_spine_start": "2026-01-01",
+            "time_spine_end": "2027-01-01"
+          }
         }
       }
     },
@@ -892,10 +1266,118 @@
                     "nullable": true
                   }
                 }
+              },
+              "semantic_tables": {
+                "sw_customers": {
+                  "grain": [
+                    "customer_id"
+                  ],
+                  "primary_key": [
+                    "customer_id"
+                  ],
+                  "measures": {}
+                },
+                "sw_amcs": {
+                  "grain": [
+                    "amc_id"
+                  ],
+                  "primary_key": [
+                    "amc_id"
+                  ],
+                  "measures": {}
+                },
+                "sw_schemes": {
+                  "grain": [
+                    "scheme_id"
+                  ],
+                  "primary_key": [
+                    "scheme_id"
+                  ],
+                  "measures": {
+                    "latest_nav": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    }
+                  },
+                  "snapshot_column": "nav_date"
+                },
+                "sw_folios": {
+                  "grain": [
+                    "folio_id"
+                  ],
+                  "primary_key": [
+                    "folio_id"
+                  ],
+                  "measures": {}
+                },
+                "sw_transactions": {
+                  "grain": [
+                    "transaction_id"
+                  ],
+                  "primary_key": [
+                    "transaction_id"
+                  ],
+                  "measures": {
+                    "units": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation.",
+                      "non_additive_over": [
+                        "scheme_id"
+                      ]
+                    },
+                    "nav": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "amount": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    }
+                  },
+                  "snapshot_column": "transaction_date"
+                },
+                "sw_holdings": {
+                  "grain": [
+                    "folio_id",
+                    "scheme_id"
+                  ],
+                  "primary_key": [
+                    "folio_id",
+                    "scheme_id"
+                  ],
+                  "measures": {
+                    "units": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation.",
+                      "non_additive_over": [
+                        "scheme_id"
+                      ]
+                    },
+                    "net_invested_amount": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    },
+                    "latest_nav": {
+                      "aggregation": "constant",
+                      "description": "Cohort attribute; distinct values require explicit weighting or grouping."
+                    },
+                    "market_value": {
+                      "aggregation": "sum",
+                      "description": "Additive at the table observation grain; select the requested period before aggregation."
+                    }
+                  },
+                  "snapshot_column": "nav_date"
+                }
               }
             }
           },
-          "domain_profile": "smartwealth"
+          "domain_profile": "smartwealth",
+          "semantic_planner": {
+            "backend": "metricflow",
+            "unsupported": "catalog",
+            "time_spine_start": "2026-01-01",
+            "time_spine_end": "2027-01-01"
+          }
         }
       }
     }

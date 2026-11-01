@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from datasource_mapping import resolve_scope
 from query_recipes import SqlRecipeDefinition
+from semantic_models import MetricDefinition
 
 Stage = Literal["classifier", "planner", "executor", "summarizer"]
 
@@ -41,12 +42,24 @@ class QuestionGuidance(BaseModel):
     request_pattern: str
     planner_instructions: list[str] = Field(default_factory=list)
     executor_instructions: list[str] = Field(default_factory=list)
+    observation_policy: "ObservationPolicy | None" = None
 
     @field_validator("request_pattern")
     @classmethod
     def valid_pattern(cls, value):
         re.compile(value, re.IGNORECASE)
         return value
+
+
+class ObservationPolicy(BaseModel):
+    """Business-owned unit of observation, not a SQL/code template."""
+
+    model_config = ConfigDict(extra="forbid")
+    table: str
+    metrics: list[str] = Field(min_length=1)
+    min_rows: int = Field(default=1, ge=0)
+    calculation_method: str | None = None
+    identity_aliases: list[str] = Field(default_factory=list)
 
 
 class DomainProfile(BaseModel):
@@ -68,6 +81,7 @@ class DomainProfile(BaseModel):
     python_required_patterns: list[str] = Field(default_factory=list)
     join_semantics: dict[str, JoinMeaning] = Field(default_factory=dict)
     question_guidance: dict[str, QuestionGuidance] = Field(default_factory=dict)
+    semantic_metrics: dict[str, MetricDefinition] = Field(default_factory=dict)
 
     @field_validator("python_required_patterns")
     @classmethod
@@ -107,6 +121,14 @@ class DomainProfile(BaseModel):
             for instruction in getattr(rule, f"{stage}_instructions")
         ]
 
+    def observation_policies(self, question):
+        return {
+            name: rule.observation_policy
+            for name, rule in self.question_guidance.items()
+            if rule.observation_policy
+            and re.search(rule.request_pattern, question, re.IGNORECASE)
+        }
+
 
 class DomainMapping(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -140,10 +162,14 @@ def domain_context(
             "action_policies_configured": bool(profile.action_policies),
             **(
                 {
+                    "semantic_metrics": {
+                        name: metric.model_dump()
+                        for name, metric in profile.semantic_metrics.items()
+                    },
                     "join_semantics": {
                         name: rule.model_dump()
                         for name, rule in profile.join_semantics.items()
-                    }
+                    },
                 }
                 if stage in ("planner", "executor")
                 else {}

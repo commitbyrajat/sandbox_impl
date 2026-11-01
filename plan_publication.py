@@ -1,6 +1,7 @@
 """Publish reviewable execution plans locally before data access begins."""
 
 import json
+import hashlib
 import os
 import sys
 from datetime import datetime, timezone
@@ -12,6 +13,74 @@ from datasource_mapping import resolve_scope
 from planning import ExecutionPlan, QuestionIntent
 
 DEFAULT_PLAN_DIR = Path(__file__).resolve().parent / "artifacts" / "plans"
+
+
+def publish_sql_stages(tenant_id, workspace_id, step_id, staged, *, directory=None):
+    """Publish every executable stage before reading intermediate data."""
+    scope = resolve_scope(tenant_id, workspace_id)
+    root = Path(directory) if directory else DEFAULT_PLAN_DIR.parent / "sql_stages"
+    folder = (
+        root
+        / ("tenant-" + quote(scope.tenant_id, safe=""))
+        / ("workspace-" + quote(scope.workspace_id, safe=""))
+    )
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / (uuid4().hex + ".json")
+    record = {
+        "version": 1,
+        "tenant_id": scope.tenant_id,
+        "workspace_id": scope.workspace_id,
+        "step_id": step_id,
+        "complexity": staged.complexity,
+        "settings": staged.settings.model_dump(),
+        "source_statement_sha256": hashlib.sha256(
+            staged.source_statement.encode()
+        ).hexdigest(),
+        "stages": [stage.receipt() for stage in staged.stages],
+    }
+    with os.fdopen(
+        os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w"
+    ) as handle:
+        json.dump(record, handle, indent=2)
+        handle.write("\n")
+    return path
+
+
+def publish_query_compilation(
+    tenant_id, workspace_id, step_id, compiled, *, directory=None
+) -> Path:
+    """Persist the actual MetricFlow manifest/dataflow/SQL before data execution."""
+    scope = resolve_scope(tenant_id, workspace_id)
+    root = (
+        Path(directory)
+        if directory is not None
+        else DEFAULT_PLAN_DIR.parent / "metricflow"
+    )
+    folder = (
+        root
+        / ("tenant-" + quote(scope.tenant_id, safe=""))
+        / ("workspace-" + quote(scope.workspace_id, safe=""))
+    )
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{uuid4().hex}.json"
+    record = {
+        "version": 1,
+        "tenant_id": scope.tenant_id,
+        "workspace_id": scope.workspace_id,
+        "step_id": step_id,
+        "published_at": datetime.now(timezone.utc).isoformat(),
+        "catalog_sha256": compiled.catalog_sha256,
+        "query_ir": compiled.logical_plan,
+        "planner": compiled.planner_receipt,
+        "statement_sha256": hashlib.sha256(compiled.statement.encode()).hexdigest(),
+        **compiled.planner_artifacts,
+    }
+    with os.fdopen(
+        os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w"
+    ) as handle:
+        json.dump(record, handle, indent=2)
+        handle.write("\n")
+    return path
 
 
 def publish_plan(

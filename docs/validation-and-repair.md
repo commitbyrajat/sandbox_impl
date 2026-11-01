@@ -5,6 +5,14 @@
 their work, logging and injected services; the graph owns lifecycle transitions.
 The custom `Pipeline(..., stages=[...])` chain remains supported.
 
+Inside execution, new plans use a typed logical query instead of model-written
+SQL: **QueryIR → SemanticCatalog → safe source preparation → MetricFlow dataflow/SQL → SQLGlot
+qualification → DataFusion compile → data consistency guards → result contract**.
+See [semantic query compilation](semantic-queries.md) and [MetricFlow](metricflow.md)
+for configuration, explicit compatibility fallback and limits.
+The lifecycle nodes stay the same; this replaces proposal generation inside the
+SQL responsibility. Old published `legacy_sql` plans retain their original path.
+
 The [generated lifecycle graph](pipeline-graph.mmd) comes from
 `LIFECYCLE_GRAPH.render()`. It includes preview exits. State is request-local and
 in memory; the graph does not implement process-restart persistence.
@@ -23,7 +31,7 @@ marked unusable rather than presented as complete data.
 | Boundary | Responsibility | Authoritative inputs |
 | --- | --- | --- |
 | Intent and plan | Describe the business outcome; select a suitable algorithm and declare contracts | Caller tenant/workspace, classified intent, datasource registry, domain instructions, scientific registry |
-| SQL generation and validation | Generate scoped SQL, validate CTE projections, relationship keys, compilation, types, observation grain and population before retaining results | Loaded Arrow schemas verified against `datasource.json`; configured join meanings; SQL output contract |
+| Logical query generation and semantic compilation | Select catalog metrics and grain; validate safe source preparation; build a scoped MetricFlow manifest/dataflow; bridge its generated SQL and validate source keys, repeated attributes, reconciliation, types and output population | Loaded Arrow schemas; semantic tables, planner configuration and relationship keys in `datasource.json`; business metrics in `domain_instructions.json`; SQL output contract |
 | Python generation and preflight | Generate code using current result IDs, exact aliases/types and supported functions; reject unsupported imports, copied replacement inputs and directly traceable invalid keys | Actual DataFusion output metadata and preview; scientific signatures, input examples and exact result fields |
 | Monty execution | Run generated code, with numerical operations delegated through the scientific bridge | Complete stored SQL rows, original Decimal values, allowlisted worker callbacks |
 | Calculation and final evidence validation | Check finite outputs and declared fields, counts, member coverage and total reconciliation before success | Python result contract and original SQL producer rows |
@@ -63,7 +71,7 @@ also carries a structured object rather than a doubly encoded JSON string.
 | Failure | Destination | Evidence retained |
 | --- | --- | --- |
 | Invalid plan shape or unsuitable declared method | `planner` | Question, classified intent and scoped registry |
-| Invalid SQL structure, compilation or observation contract | `sql_generator` | Earlier completed steps and the failed SQL diagnostic |
+| Invalid logical query, unsafe grain, compilation or observation contract | `sql_generator` | Earlier completed steps and the structured compiler diagnostic; revise QueryIR on semantic plans |
 | SQL observations are genuinely inadequate for the pending calculation | `sql_input_repair` | Unaffected SQL results; the published contract remains unchanged |
 | Unsupported import/API key, wrong row alias, sandbox runtime error or failed calculation invariant | `python_generator` | Successful SQL datasets and their exact types |
 | Unsupported summary claim | `summarizer` | All execution evidence; only presentation is regenerated |
@@ -128,7 +136,8 @@ does not prove the business interpretation is correct.
 
 Setting `AGENT_SUMMARIZATION_ENABLED=false` skips the presentation model and its
 numeric/topic guards. The deterministic `validate_results` stage still runs, and
-the executor report and pending clarification questions remain available.
+retained Python calculations are rendered as formatted JSON without an LLM rewrite.
+SQL-only analyses retain the executor report. Pending clarification questions remain available.
 
 The summary context retains computed estimates, bounds and full member lists.
 Long raw working arrays named `bootstrap_distribution`, `null_distribution`,

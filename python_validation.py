@@ -5,6 +5,7 @@ import builtins
 import symtable
 
 from scientific_models import scientific_catalog
+from external_module_models import module_catalog
 
 SANDBOX_IMPORTS = {
     "math",
@@ -39,7 +40,23 @@ def preflight_python(
     code = prepare_python(code)
     tree = ast.parse(code)
     catalog = scientific_catalog()
-    operations = catalog["operations"] if scientific else {}
+    operations = (
+        {
+            **{
+                f"scientific.{key}": value
+                for key, value in catalog["operations"].items()
+            },
+            **module_catalog()["functions"],
+        }
+        if scientific
+        else {}
+    )
+    external_paths = {
+        ".".join(path.split(".")[:i])
+        for path in operations
+        for i in range(1, len(path.split(".")))
+    }
+    roots = sorted({path.split(".")[0] for path in external_paths})
     modules, functions = {}, {}
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -49,42 +66,62 @@ def preflight_python(
                 else [node.module or ""]
             )
             for name in names:
+                if name == "numpy.random":
+                    raise PythonPreflightError(
+                        "numpy.random is a restricted attribute namespace. Use import numpy as np and await np.random.binomial(...), or from numpy import random; do not import numpy.random as a standalone module."
+                    )
                 root = name.split(".")[0]
                 if root not in SANDBOX_IMPORTS and not (
-                    root == "scientific" and scientific
+                    scientific and name in external_paths
                 ):
                     raise PythonPreflightError(
-                        f"Unsupported sandbox import {name!r}. Available external modules: {['scientific'] if scientific else []}. "
-                        "NumPy/SciPy execute in the numerical worker. Pass nested Python lists directly to scientific.kmeans; the worker handles float64 conversion."
+                        f"Unsupported sandbox import {name!r}. Available external modules: {roots}. "
+                        "Use only registered async library functions; arrays and DataFrames return lists/records, with native computation in the worker."
                     )
             if isinstance(node, ast.Import):
                 for entry in node.names:
-                    if entry.name == "scientific":
-                        modules[entry.asname or entry.name] = True
-            elif node.module == "scientific":
-                for entry in node.names:
-                    if entry.name not in operations:
-                        raise PythonPreflightError(
-                            f"Unknown scientific function {entry.name!r}; use {sorted(operations)}"
+                    if entry.name in external_paths:
+                        modules[entry.asname or entry.name.split(".")[0]] = (
+                            entry.name if entry.asname else entry.name.split(".")[0]
                         )
-                    functions[entry.asname or entry.name] = entry.name
+            elif node.module in external_paths:
+                for entry in node.names:
+                    qualified = node.module + "." + entry.name
+                    if qualified in operations:
+                        functions[entry.asname or entry.name] = qualified
+                    elif qualified in external_paths:
+                        modules[entry.asname or entry.name] = qualified
+                    elif qualified not in (
+                        "numpy.float64",
+                        "numpy.int64",
+                        "numpy.bool_",
+                    ):
+                        raise PythonPreflightError(
+                            f"Unknown external function/module {qualified!r}; use registered functions"
+                        )
+
+    def access(node):
+        if isinstance(node, ast.Name):
+            return functions.get(node.id, modules.get(node.id))
+        if isinstance(node, ast.Attribute) and (parent := access(node.value)):
+            return parent + "." + node.attr
+        return None
 
     def operation(call):
         if not isinstance(call, ast.Call):
             return None
-        fn = call.func
-        if (
-            isinstance(fn, ast.Attribute)
-            and isinstance(fn.value, ast.Name)
-            and fn.value.id in modules
-        ):
-            if fn.attr not in operations:
-                raise PythonPreflightError(
-                    f"Unknown scientific function {fn.attr!r}; use {sorted(operations)}"
-                )
-            return fn.attr
-        return functions.get(fn.id) if isinstance(fn, ast.Name) else None
+        name = access(call.func)
+        if name and name not in operations:
+            raise PythonPreflightError(
+                f"Unknown {'scientific function' if name.startswith('scientific.') else 'external function'} {(name.removeprefix('scientific.') if name.startswith('scientific.') else name)!r}; use {sorted(key for key in operations if key.startswith(name.rsplit('.',1)[0]+'.'))}"
+            )
+        return name
 
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             name = operation(node)
@@ -97,7 +134,15 @@ def preflight_python(
                 )
             ):
                 raise PythonPreflightError(
-                    f"scientific.{name} does not implement the published {analysis_kind!r} outcome. Use the published algorithm; similarity clustering does not balance totals."
+                    f"{name} does not implement the published {analysis_kind!r} outcome. Use the published algorithm; similarity clustering does not balance totals."
+                )
+            if (
+                name
+                and not name.startswith("scientific.")
+                and not isinstance(parents.get(id(node)), ast.Await)
+            ):
+                raise PythonPreflightError(
+                    f"{name} is an async external function. Use await {name}(...) before reading its value. {module_catalog()['contract']}"
                 )
     # Track only direct top-level bindings; uncertain control-flow is left to Monty.
     outputs, rowsets = {}, {}

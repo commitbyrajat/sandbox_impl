@@ -34,7 +34,7 @@ class RecipeTests(unittest.IsolatedAsyncioTestCase):
             model=self.model,
         )
 
-    async def test_exact_request_one_correct_query_no_monty_or_executor_llm(self):
+    async def test_exact_request_staged_query_no_monty_or_executor_llm(self):
         plan = await self.plan()
         self.assertEqual([s.action for s in plan.steps], ["schema", "sql"])
         self.assertEqual(plan.execution_mode, "sql")
@@ -49,8 +49,13 @@ class RecipeTests(unittest.IsolatedAsyncioTestCase):
             side_effect=AssertionError("No Monty for SQL recipe"),
         ):
             result = await execute_plan(QUESTION, plan, sources, self.model)
-        self.assertEqual(len(result.queries), 1)
-        rows = next(iter(result.sql_results.values()))["rows"]
+        self.assertEqual(len(result.sql_results), 1)
+        stored = next(iter(result.sql_results.values()))
+        self.assertGreater(len(result.queries), 1)
+        self.assertEqual(
+            result.queries, [stage["statement"] for stage in stored["sql_stages"]]
+        )
+        rows = stored["rows"]
         self.assertEqual(len(rows), 1)
         r = rows[0]
         self.assertEqual(str(r["month"]), "2026-06-01")

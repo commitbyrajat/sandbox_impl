@@ -10,6 +10,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolRetu
 from pydantic_ai.models.function import FunctionModel
 from pydantic_monty import AsyncMonty, MontyRuntimeError
 from test_support import ask
+from semantic_fixtures import count_query, holdings_query
 
 from agent import DataSources, classify_question, plan_question
 from datasource_mapping import routing_catalog
@@ -110,11 +111,9 @@ class SandboxTests(unittest.IsolatedAsyncioTestCase):
                 )
             if returns[-1].tool_name == "describe_sources":
                 self.assertNotIn("sw_holdings", returns[-1].content)
-                query = "SELECT count(*) AS cards FROM cc_transactions"
+                query = count_query("cc_transactions", "cards")
                 return ModelResponse(
-                    parts=[
-                        ToolCallPart("run_sql", {"step_id": "s2", "statement": query})
-                    ]
+                    parts=[ToolCallPart("run_sql", {"step_id": "s2", "query": query})]
                 )
             evidence = json.loads(returns[-1].content)
             self.assertEqual(evidence["rows"], [{"cards": 1000}])
@@ -176,11 +175,9 @@ class SandboxTests(unittest.IsolatedAsyncioTestCase):
                     parts=[ToolCallPart("describe_sources", {"step_id": "s1"})]
                 )
             if returns[-1].tool_name == "describe_sources":
-                query = "SELECT customer_id, sum(market_value) AS value FROM sw_holdings GROUP BY customer_id"
+                query = holdings_query(customer=True)
                 return ModelResponse(
-                    parts=[
-                        ToolCallPart("run_sql", {"step_id": "s2", "statement": query})
-                    ]
+                    parts=[ToolCallPart("run_sql", {"step_id": "s2", "query": query})]
                 )
             if returns[-1].tool_name == "run_sql":
                 evidence = json.loads(returns[-1].content)
@@ -213,14 +210,15 @@ class SandboxTests(unittest.IsolatedAsyncioTestCase):
                 ]
             )
 
-        answer = await ask(
-            "Apply a custom calculation to customer portfolio values.",
-            tenant_id="2",
-            workspace_id="2",
-            model=FunctionModel(model),
-            classifier_model=classifier,
-            planner_model=classifier,
-        )
+        with patch.dict("os.environ", {"AGENT_SUMMARIZATION_ENABLED": "true"}):
+            answer = await ask(
+                "Apply a custom calculation to customer portfolio values.",
+                tenant_id="2",
+                workspace_id="2",
+                model=FunctionModel(model),
+                classifier_model=classifier,
+                planner_model=classifier,
+            )
         self.assertIn("635,082", answer)
 
     async def test_clarification_opens_no_sources(self):
@@ -274,7 +272,7 @@ class SandboxTests(unittest.IsolatedAsyncioTestCase):
                             "run_sql",
                             {
                                 "step_id": "s2",
-                                "statement": "SELECT count(*) AS n FROM cc_customers",
+                                "query": count_query("cc_customers"),
                             },
                         )
                     ]
@@ -477,6 +475,60 @@ def executable_plan(
         steps[1]["output_contract"] = output_contract or {
             "required_columns": {"n": {"type": "integer"}}
         }
+    if declared:
+        names = set(steps[1]["output_contract"]["required_columns"])
+        if workspace_id == "2" and "amc_name" in names:
+            amount = next(
+                name for name in names if name not in {"amc_name", "nav_date"}
+            )
+            steps[1]["logical_query"] = holdings_query(amount, date="nav_date" in names)
+        elif workspace_id == "2" and "customer_id" in names:
+            steps[1]["logical_query"] = holdings_query(customer=True)
+        elif "spending_per_card" in names:
+            steps[1]["logical_query"] = {
+                "base_table": "cc_customers",
+                "dimensions": [
+                    {"name": key, "field": {"table": "cc_customers", "column": key}}
+                    for key in ["customer_id", "full_name"]
+                ]
+                + [
+                    {
+                        "name": "month",
+                        "field": {"table": "cc_monthly_financials", "column": "month"},
+                    }
+                ],
+                "metrics": [
+                    {"name": name, "metric": name}
+                    for name in [
+                        "card_count",
+                        "spending_per_card",
+                        "profitability_per_card",
+                        "opex_per_card",
+                    ]
+                ],
+                "relationships": ["card_customer", "financial_card"],
+                "time": {"selection": "latest", "tables": ["cc_monthly_financials"]},
+            }
+        elif "pat_per_customer" in names:
+            steps[1]["logical_query"] = {
+                "base_table": "cc_customers",
+                "dimensions": [
+                    {
+                        "name": "customer_id",
+                        "field": {"table": "cc_customers", "column": "customer_id"},
+                    }
+                ],
+                "metrics": [{"name": "pat_per_customer", "metric": "pat"}],
+                "relationships": ["card_customer", "financial_card"],
+                "time": {"selection": "latest", "tables": ["cc_monthly_financials"]},
+            }
+        else:
+            table = (
+                "cc_transactions"
+                if "cards" in names
+                else ("cc_customers" if workspace_id == "1" else "sw_customers")
+            )
+            steps[1]["logical_query"] = count_query(table, next(iter(names)))
     if mode == "sql_python":
         steps.append(
             {

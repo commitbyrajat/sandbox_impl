@@ -12,6 +12,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from test_agent import executable_plan, structured_response, tool_returns
 from test_support import ask
+from semantic_fixtures import count_query
 
 from agent import configured_model, plan_question
 from datasource_mapping import (
@@ -53,7 +54,7 @@ def answering_model(tenant_id, workspace_id, table, count, events):
                         "run_sql",
                         {
                             "step_id": "s2",
-                            "statement": f"SELECT count(*) AS n FROM {table}",
+                            "query": count_query(table),
                         },
                     )
                 ]

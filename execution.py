@@ -26,6 +26,7 @@ from datasource_mapping import resolve_scope, routing_catalog
 from domain_instructions import domain_context, get_domain_profile
 from model_config import configured_model
 from planning import ExecutionPlan
+from plan_publication import publish_query_compilation, publish_sql_stages
 from query_recipes import render_sql_recipe
 from result_contracts import ResultContractError
 from runtime import (
@@ -42,12 +43,15 @@ from sql_diagnostics import (
     sql_fingerprint,
 )
 from sql_joins import configured_joins
+from sql_staging import plan_sql_stages
 from scientific_bridge import ScientificBridge
 from scientific_models import scientific_catalog
 from python_validation import SANDBOX_IMPORTS, prepare_python, preflight_python
 from python_input_context import python_data_context
 from repair_feedback import RepairFeedback, execution_repair_handoff
 from calculation_contracts import validate_python_result
+from semantic_models import QueryIR
+from semantic_query import SemanticCatalog, SemanticQueryError, compile_query
 
 INSTRUCTIONS = """
 Implement the supplied execution plan in order, then return a compact execution
@@ -61,6 +65,14 @@ Pass the exact step_id to each tool. One successful call completes a step; faile
 calls leave it pending so you can correct SQL/code and retry. Do not skip steps,
 execute unplanned steps or answer before all steps finish. Use validation_checks
 when interpreting results; state limitations and do not claim checks that failed.
+Planned validation_checks are not evidence that every check ran. Report a successful
+validation only when a tool or retained receipt confirms it. Use semantic_planner
+time_groupings and cumulative_period_aggregation for calendar interpretation:
+period_start labels are the first date of a period, even when a cumulative last
+value measures its end. Present the month name/year; do not call that label an
+actual month-end date or invent a different valuation date.
+For cumulative_period_aggregation last, describe each amount as a closing value
+through the end of its labeled period; no opening/start-of-period amount is supplied.
 These are concise operational steps, not a transcript of private deliberation.
 Use describe_sources before querying unfamiliar columns. Its returned schemas are
 authoritative: column names suggested by the plan are provisional. Replace guessed
@@ -104,7 +116,7 @@ SQL. Pass result_ids from run_sql; the sandbox receives a dict called data mappi
 those IDs to their rows. Example: sum(r['amount'] for r in data['query_1']).
 End the code with the computed dict/list expression, such as result, rather than
 print(result) or an assignment. Its final Python expression is returned. Each invocation is a fresh sandbox;
-no pandas, pyarrow, network, filesystem, SQL callbacks or previous Python state.
+no pyarrow, network, filesystem, SQL callbacks or previous Python state.
 Use exact column aliases returned by run_sql, not guessed names from the plan.
 Use decimal.Decimal for exact decimal calculations; never mix Decimal and float.
 Each fresh snippet must import its modules: use from decimal import Decimal.
@@ -112,10 +124,15 @@ SQL monetary values remain Decimal for accounting totals and monetary averages.
 The scientific bridge explicitly converts numerical inputs to float64 for library
 algorithms; use returned labels/indices to recompute monetary aggregates from the
 original Decimal rows. Do not mix Decimal and float in handwritten arithmetic.
-Only the supplied scientific module exposes external callbacks.
+Only registered external-module functions expose worker callbacks.
 The sandbox supports random.seed and random.choice, Decimal, lists, loops and
-sorted. Import scientific for approved SciPy/NumPy operations; direct numpy/scipy
-imports are unavailable in Monty. Prefer scientific.kmeans, scientific.bootstrap,
+sorted. numpy, pandas, scipy and statistics are available as bounded async external
+modules, with exact functions/signatures in the external_modules catalog. Await
+every function call. Arrays are native lists; DataFrames are records, not live
+native objects. Use await np.reshape(a, shape), not a.reshape(...), and await
+pd.groupby(records, by=..., agg=...), not records.groupby(...). No default_rng or
+array/DataFrame methods exist. Use seeded numpy.random functions directly.
+Prefer scientific.kmeans, scientific.bootstrap,
 scientific.sample, scientific.binomial, scientific.bernoulli and
 scientific.resample_indices over handwritten implementations when applicable.
 scientific.monte_carlo_test is a hypothesis test, not a general loss simulation.
@@ -146,6 +163,34 @@ queries using tool feedback; never switch to an unselected source.
 """
 
 
+SEMANTIC_INSTRUCTIONS = """
+Inspect source schemas before selecting typed query fields. Use QueryIR with
+catalog metric IDs, dimensions, filters and time selection. The host compiler owns
+join keys, aggregation functions, source preaggregation, grouping and SQL syntax.
+Do not generate or repair SQL strings. Select relationship IDs only when business
+paths are ambiguous. Undefined business metrics require clarification or catalog
+configuration, not invented formulas. Arithmetic calculations reference preceding
+output aliases; concat can form compound observation labels from selected keys.
+Preserve every component of the published observation grain. The compiler cannot
+infer business intent from an output alias. Use the curated metric definition for
+the requested business meaning rather than substituting a similarly named column.
+Each SQL result must satisfy the published output_contract before the step ends.
+Compiler diagnostics describe logical plan defects; revise QueryIR for the same
+pending step. Never bypass consistency guards or replace a failed compiler plan
+with SQL text. Decimal sums remain exact; derived arithmetic uses float64 and
+zero denominators yield NULL. Keep undefined metrics visible rather than reporting
+them as zero. Source metadata and actual Arrow schemas must agree before execution.
+"""
+
+
+def executor_instructions(semantic: bool) -> str:
+    if not semantic:
+        return INSTRUCTIONS
+    start = INSTRUCTIONS.index("Use describe_sources before")
+    end = INSTRUCTIONS.index("Python input_steps identify")
+    return INSTRUCTIONS[:start] + SEMANTIC_INSTRUCTIONS + INSTRUCTIONS[end:]
+
+
 def require_finished_values(value):
     """An unawaited sandbox future/proxy is not numerical execution evidence."""
     if isinstance(value, (MontyClassProxy, MontyStdTypeProxy)) or (
@@ -173,13 +218,17 @@ class Dependencies:
     failed_sql: dict[tuple[str, str], SQLDiagnostic] = field(default_factory=dict)
     last_sql_diagnostic: SQLDiagnostic | None = None
     sql_attempts: dict[str, int] = field(default_factory=dict)
+    sql_logical_queries: dict[str, dict[str, Any]] = field(default_factory=dict)
     sql_step_results: dict[str, str] = field(default_factory=dict)
     sql_step_statements: dict[str, str] = field(default_factory=dict)
+    sql_revision_required: set[str] = field(default_factory=set)
+    invalidated_sql_statements: dict[str, set[str]] = field(default_factory=dict)
     input_repairs: int = 0
     last_python_error: str | None = None
     scientific: ScientificBridge | None = None
     repair_history: list[RepairFeedback] = field(default_factory=list)
     validation_receipts: list[dict[str, Any]] = field(default_factory=list)
+    sql_metrics: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -191,6 +240,7 @@ class ExecutionResult:
     completed_steps: list[str] = field(default_factory=list)
     repair_history: list[RepairFeedback] = field(default_factory=list)
     validation_receipts: list[dict[str, Any]] = field(default_factory=list)
+    sql_metrics: list[dict[str, Any]] = field(default_factory=list)
 
 
 def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
@@ -201,6 +251,15 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
     retries = tool_retry_limit()
     workspace = resolve_scope(plan.tenant_id, plan.workspace_id).workspace
     profile = get_domain_profile(plan.workspace_id, tenant_id=plan.tenant_id)
+    semantic_catalog = (
+        SemanticCatalog(
+            {key: workspace.sources[key] for key in plan.sources},
+            profile,
+            workspace.semantic_planner,
+        )
+        if plan.query_language == "semantic"
+        else None
+    )
     bindings = configured_joins(
         {key: workspace.sources[key] for key in plan.sources}, profile.join_semantics
     )
@@ -217,7 +276,7 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
         deps_type=Dependencies,
         capabilities=[execution_repair_handoff(plan)],
         instructions=(
-            INSTRUCTIONS
+            executor_instructions(semantic_catalog is not None)
             + "\nWorkspace domain guidance:\n"
             + domain_context(
                 plan.workspace_id, tenant_id=plan.tenant_id, stage="executor"
@@ -226,6 +285,21 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
             + routing_catalog(plan.workspace_id, tenant_id=plan.tenant_id)
             + "\nExecution plan:\n"
             + plan.model_dump_json()
+            + (
+                "\nSemantic query execution is required. Call run_sql(step_id) to execute the published logical_query. Only supply query=QueryIR when correcting a compiler diagnostic, or when a manually constructed semantic step has no published query. "
+                "Never supply statement or SQL text. Select catalog metric IDs; do not choose "
+                "aggregation functions or join keys. Use relationships only to disambiguate "
+                "business paths. Preserve the output contract aliases and observation grain. "
+                "If a business metric is undefined, report that missing definition instead of inventing it. "
+                "Arithmetic calculations may reference preceding output aliases; divisions return "
+                "NULL on zero denominators and derived arithmetic uses approximate float64. "
+                "For risk/other probability metrics explicitly select metric_horizons. "
+                "Semantic table keys, measures and types are in the workspace catalog above; "
+                "named metric definitions are in workspace domain guidance. Schema inspection "
+                "verifies their column types before any compilation."
+                if semantic_catalog
+                else ""
+            )
             + (
                 "\nAvailable scientific module (host SciPy worker):\n"
                 + json.dumps(scientific_catalog(include_limits=True))
@@ -313,8 +387,25 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
         if index < len(plan.steps) and plan.steps[index].action == "python":
             state["python_capabilities"] = {
                 "sandbox_imports": sorted(SANDBOX_IMPORTS),
-                "external_modules": ["scientific"] if ctx.deps.scientific else [],
-                "scientific_api": scientific_catalog() if ctx.deps.scientific else {},
+                "external_modules": (
+                    ["scientific", *scientific_catalog()["external_modules"]["modules"]]
+                    if ctx.deps.scientific
+                    else []
+                ),
+                "scientific_api": (
+                    {
+                        "operations": {
+                            key: {
+                                field: value
+                                for field, value in entry.items()
+                                if field in ("signature", "returns")
+                            }
+                            for key, entry in scientific_catalog()["operations"].items()
+                        }
+                    }
+                    if ctx.deps.scientific
+                    else {}
+                ),
                 "data_binding": "Prefer rows = data[result_id]. SQL-backed aliases are supported; do not replace supplied rows with copied data.",
             }
         if ctx.deps.repair_history:
@@ -341,6 +432,41 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
         if index >= len(plan.steps):
             return None
         expected = plan.steps[index]
+        if tool.name == "run_python" and expected.result_contract is not None:
+            schema = dict(tool.parameters_json_schema)
+            schema["properties"] = {
+                key: dict(value) for key, value in schema["properties"].items()
+            }
+            code_schema = schema["properties"]["code"]
+            code_schema["description"] = (
+                code_schema.get("description", "Python snippet")
+                + ". The final expression must satisfy this exact output contract: "
+                + expected.result_contract.model_dump_json()
+                + ". Preserve required output field names exactly; do not rename them "
+                "to business labels. If the library already returns those fields, "
+                "return that result or select the required keys without renaming."
+            )
+            tool = replace(tool, parameters_json_schema=schema)
+        if semantic_catalog and tool.name == "run_sql":
+            schema = dict(tool.parameters_json_schema)
+            schema["properties"] = {
+                key: value
+                for key, value in schema["properties"].items()
+                if key != "statement"
+                and (
+                    key != "query"
+                    or expected.logical_query is None
+                    or ctx.deps.last_sql_diagnostic is not None
+                    or expected.step_id in ctx.deps.sql_revision_required
+                )
+            }
+            schema["required"] = ["step_id"] + (
+                []
+                if expected.logical_query is not None
+                and expected.step_id not in ctx.deps.sql_revision_required
+                else ["query"]
+            )
+            tool = replace(tool, parameters_json_schema=schema)
         if tool.name == "request_sql_repair":
             return (
                 tool
@@ -382,6 +508,16 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
         return ctx.deps.sql_schemas
 
     def reject_sql(ctx, step_id, diagnostic):
+        if semantic_catalog:
+            diagnostic.scope_inputs.append(
+                {
+                    "query_ir": ctx.deps.sql_logical_queries.get(step_id),
+                    "generation_interface": "QueryIR",
+                }
+            )
+            diagnostic.repair_instructions = [
+                "Revise the logical QueryIR using the compiler error and catalog definitions. The generated SQL is diagnostic evidence, never an editable proposal. Do not bypass source consistency guards; data defects require corrected data or metadata."
+            ]
         ctx.deps.last_sql_diagnostic = diagnostic
         if diagnostic.cacheable:
             ctx.deps.failed_sql[(step_id, diagnostic.fingerprint)] = diagnostic
@@ -394,7 +530,11 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
             phase=diagnostic.phase,
             step_id=step_id,
             diagnostic=diagnostic.error,
-            artifact={"statement": diagnostic.failed_sql},
+            artifact=(
+                {"query_ir": ctx.deps.sql_logical_queries.get(step_id)}
+                if semantic_catalog
+                else {"statement": diagnostic.failed_sql}
+            ),
             authority={"sql_validation": diagnostic.model_dump(exclude={"failed_sql"})},
             retries_remaining=max(0, retries - ctx.retry),
             instructions=diagnostic.repair_instructions,
@@ -466,21 +606,151 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
             "registry_verified": True,
             "relationships": [key.model_dump() for key in bindings],
             "type_authority": "Use source Arrow types for initial SQL generation. SQLGlot inferred types are advisory; DataFusion result_schema is authoritative for computed values supplied to Monty.",
+            **(
+                {
+                    "semantic_catalog": {
+                        "sha256": semantic_catalog.fingerprint,
+                        "metric_ids": sorted(semantic_catalog.metrics),
+                        "table_grains": {
+                            name: spec.grain
+                            for name, spec in semantic_catalog.tables.items()
+                        },
+                    },
+                    "query_interface": "QueryIR",
+                }
+                if semantic_catalog
+                else {}
+            ),
         }
         ctx.deps.completed_steps.append(step_id)
         return result
 
     @agent.tool(sequential=True, prepare=prepare_active_tool)
     async def run_sql(
-        ctx: RunContext[Dependencies], step_id: str, statement: str
+        ctx: RunContext[Dependencies],
+        step_id: str,
+        query: QueryIR | None = None,
+        statement: str | None = None,
     ) -> str:
         """Execute read-only DataFusion SQL on routed sources; retain result_id for Python.
 
         Args:
             step_id: ID of the current SQL step in the execution plan.
-            statement: One SELECT query, optionally with CTEs.
+            query: Logical selections using catalog metric IDs, dimensions and filters.
+            statement: Compatibility input for old published legacy_sql plans only.
         """
         enforce_step(ctx, step_id, "sql")
+        published_query = plan.steps[len(ctx.deps.completed_steps)].logical_query
+        if semantic_catalog and published_query is not None:
+            if (
+                query is not None
+                and query.model_dump() != published_query.model_dump()
+                and ctx.deps.last_sql_diagnostic is None
+                and step_id not in ctx.deps.sql_revision_required
+            ):
+                raise ModelRetry(
+                    "Execute the published logical query by supplying step_id only. Revise QueryIR only after a compiler diagnostic."
+                )
+            query = query or published_query
+            if step_id in ctx.deps.sql_revision_required and (
+                query is None
+                or query.model_dump() == ctx.deps.sql_logical_queries.get(step_id)
+            ):
+                raise ModelRetry(
+                    "SQL_REPAIR_UNCHANGED: this input was invalidated. Supply query= with a revised QueryIR addressing the input-repair diagnostic; repeating the published query cannot repair it."
+                )
+        compiled = None
+        metric = {
+            "step_id": step_id,
+            "attempt": max(ctx.deps.sql_attempts.get(step_id, 0) + 1, ctx.retry + 1),
+            "logical_plan_valid": False,
+            "sqlglot_valid": False,
+            "datafusion_compiled": False,
+            "output_contract_valid": False,
+            "executed": False,
+            "first_attempt": ctx.deps.sql_attempts.get(step_id, 0) == 0
+            and ctx.retry == 0,
+            "tool_retry_index": ctx.retry,
+        }
+        if semantic_catalog:
+            ctx.deps.sql_metrics.append(metric)
+            if query is not None:
+                ctx.deps.sql_logical_queries[step_id] = query.model_dump()
+            try:
+                if query is None or statement is not None:
+                    raise SemanticQueryError(
+                        "QUERY_IR_REQUIRED",
+                        "Supply query=QueryIR only; SQL text is not accepted",
+                    )
+                ctx.deps.sources.validate_registry_schema()
+                contract = plan.steps[len(ctx.deps.completed_steps)].output_contract
+                compiled = compile_query(
+                    query,
+                    semantic_catalog,
+                    population=contract.population if contract else None,
+                )
+                statement = compiled.statement
+                if statement in ctx.deps.invalidated_sql_statements.get(step_id, set()):
+                    raise SemanticQueryError(
+                        "SQL_REPAIR_UNCHANGED",
+                        "The compiled SQL is identical to an invalidated input. Revise its logical selections using the repair diagnostic before executing again.",
+                    )
+                if compiled.planner_artifacts:
+                    artifact = publish_query_compilation(
+                        plan.tenant_id, plan.workspace_id, step_id, compiled
+                    )
+                    compiled.planner_receipt["artifact_path"] = str(artifact)
+                    trace(f"METRICFLOW_PLAN: {artifact}")
+                metric["planner_backend"] = compiled.planner_receipt["backend"]
+                if "fallback_reason" in compiled.planner_receipt:
+                    trace(
+                        "METRICFLOW_FALLBACK: " + json.dumps(compiled.planner_receipt)
+                    )
+                metric["logical_plan_valid"] = True
+                trace(
+                    "QUERY_COMPILED: "
+                    + json.dumps(
+                        {
+                            "step_id": step_id,
+                            "catalog_sha256": compiled.catalog_sha256,
+                            "relationships": compiled.relationships,
+                            "preaggregation": compiled.preaggregated_tables,
+                            "query": compiled.logical_plan,
+                            "planner": compiled.planner_receipt,
+                        }
+                    )
+                )
+            except SemanticQueryError as error:
+                ctx.deps.sql_attempts[step_id] = metric["attempt"]
+                metric["error_code"] = error.diagnostic["error_code"]
+                trace("SQL_KPI: " + json.dumps(metric))
+                reject_sql(
+                    ctx,
+                    step_id,
+                    SQLDiagnostic(
+                        phase="semantic_plan",
+                        error=str(error),
+                        failed_sql="",
+                        fingerprint=hashlib.sha256(
+                            (query.model_dump_json() if query else "null").encode()
+                        ).hexdigest(),
+                        scope_inputs=[
+                            {
+                                "query_ir": query.model_dump() if query else None,
+                                "compiler_diagnostic": error.diagnostic,
+                            }
+                        ],
+                        repair_instructions=[
+                            "Revise the typed query using the compiler diagnostic and scoped semantic catalog. Do not generate SQL or change business definitions."
+                        ],
+                    ),
+                )
+        elif query is not None:
+            raise ModelRetry(
+                "This previously published plan uses statement; rebuild it to use semantic QueryIR"
+            )
+        elif statement is None:
+            raise ModelRetry("Legacy SQL plan requires statement")
         retained_id = ctx.deps.sql_step_results.get(step_id)
         if retained_id in ctx.deps.sources.results:
             result = ctx.deps.sources.results[retained_id]
@@ -496,7 +766,7 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                 },
                 default=str,
             )
-        attempt = ctx.deps.sql_attempts.get(step_id, 0) + 1
+        attempt = metric["attempt"]
         ctx.deps.sql_attempts[step_id] = attempt
         fingerprint = sql_fingerprint(statement)
         trace(
@@ -516,21 +786,82 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
             )
             reject_sql(ctx, step_id, diagnostic)
         schemas = sql_schemas(ctx)
+        stage_plan = None
+        stage_artifact = None
         try:
-            checked = await asyncio.to_thread(
-                preflight_sql, statement, schemas, ctx.deps.sources.context, bindings
-            )
+            stage_plan = plan_sql_stages(statement)
+            if stage_plan.staged:
+                stage_artifact = publish_sql_stages(
+                    plan.tenant_id, plan.workspace_id, step_id, stage_plan
+                )
+                trace(f"SQL_STAGES_PLAN: {stage_artifact}")
+            checked = None
+            if not stage_plan.staged:
+                checked = await asyncio.to_thread(
+                    preflight_sql,
+                    statement,
+                    schemas,
+                    ctx.deps.sources.context,
+                    bindings,
+                )
+            if compiled and checked:
+                metric.update(sqlglot_valid=True, datafusion_compiled=True)
         except SQLPreflightError as error:
             diagnostic = error.diagnostic.model_copy(update={"attempt": attempt})
+            if compiled:
+                metric["sqlglot_valid"] = diagnostic.phase == "datafusion_compile"
+                metric["error_code"] = diagnostic.phase
+                trace("SQL_KPI: " + json.dumps(metric))
             trace(
                 f"TOOL run_sql: {step_id} failed preflight ({diagnostic.phase}): {diagnostic.error[:1000]}"
             )
             if diagnostic.phase == "configuration":
                 raise ValueError(diagnostic.error) from error
             reject_sql(ctx, step_id, diagnostic)
+        except ValueError as error:
+            reject_sql(
+                ctx,
+                step_id,
+                sql_diagnostic(
+                    statement,
+                    str(error),
+                    schemas,
+                    phase="stage_planning",
+                    bindings=bindings,
+                ),
+            )
         try:
+            if compiled:
+                # Plan every guard before executing any guard or fetching result rows.
+                for _, guard_sql in compiled.guards:
+                    await asyncio.to_thread(
+                        preflight_sql,
+                        guard_sql,
+                        schemas,
+                        ctx.deps.sources.context,
+                        bindings,
+                    )
+                await asyncio.to_thread(compiled.verify_data, ctx.deps.sources.context)
             step = plan.steps[len(ctx.deps.completed_steps)]
-            if step.output_contract is None:
+            if stage_plan.staged:
+                result = await asyncio.to_thread(
+                    ctx.deps.sources.query,
+                    statement,
+                    contract=step.output_contract,
+                    stage_plan=stage_plan,
+                    bindings=bindings,
+                )
+                from sql_diagnostics import SQLCheck
+
+                checked = SQLCheck.model_validate(result["sql_validation"])
+                result["sql_stages_artifact"] = str(stage_artifact)
+                if compiled:
+                    metric.update(
+                        sqlglot_valid=True,
+                        datafusion_compiled=True,
+                        execution_stages=len(result["sql_stages"]),
+                    )
+            elif step.output_contract is None:
                 result = await asyncio.to_thread(ctx.deps.sources.query, statement)
             else:
                 result = await asyncio.to_thread(
@@ -549,8 +880,36 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                         if step.output_contract
                         else ["workspace", "sqlglot", "datafusion"]
                     ),
+                    **(
+                        {"sql_stages": result["sql_stages"]}
+                        if "sql_stages" in result
+                        else {}
+                    ),
+                    **(
+                        {
+                            "query_ir": compiled.logical_plan,
+                            "catalog_sha256": compiled.catalog_sha256,
+                            "semantic_checks": [
+                                "catalog_measures",
+                                "join_grain",
+                                "source_keys",
+                                "constant_consistency",
+                            ],
+                            "preaggregation": compiled.preaggregated_tables,
+                            "planner": compiled.planner_receipt,
+                        }
+                        if compiled
+                        else {}
+                    ),
                 }
             )
+            if compiled:
+                ctx.deps.sql_revision_required.discard(step_id)
+                metric.update(
+                    output_contract_valid=step.output_contract is not None,
+                    executed=True,
+                )
+                trace("SQL_KPI: " + json.dumps(metric))
             trace(
                 f'TOOL run_sql: {step_id} completed; {len(result["rows"])} stored rows'
             )
@@ -560,7 +919,19 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                     {
                         "step_id": step_id,
                         "result_id": result["result_id"],
-                        "statement": statement,
+                        "statement": (
+                            stage_plan.stages[-1].statement
+                            if stage_plan.staged
+                            else statement
+                        ),
+                        **(
+                            {
+                                "stages_artifact": str(stage_artifact),
+                                "stage_count": len(stage_plan.stages),
+                            }
+                            if stage_plan.staged
+                            else {}
+                        ),
                         "row_count": len(result["rows"]),
                         "columns": result["columns"],
                         "column_types": result.get("column_types", []),
@@ -572,23 +943,66 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                 if plan.execution_mode == "sql_python"
                 else result
             )
+            if stage_plan.staged:
+                # Keep executable intermediate SQL in the host artifact, avoiding
+                # another giant SQL prompt before Python generation.
+                view = {
+                    **view,
+                    "sql_stages": [
+                        {
+                            key: value
+                            for key, value in stage.items()
+                            if key != "statement"
+                        }
+                        for stage in result["sql_stages"]
+                    ],
+                }
             return json.dumps(
-                {**view, "sql_validation": checked.model_dump()}, default=str
+                {
+                    **view,
+                    "sql_validation": checked.model_dump(),
+                    "executed_statement": (
+                        stage_plan.stages[-1].statement
+                        if stage_plan.staged
+                        else statement
+                    ),
+                    **(
+                        {"semantic_planner": compiled.planner_receipt}
+                        if compiled
+                        else {}
+                    ),
+                },
+                default=str,
             )
         except Exception as exc:
+            if compiled:
+                metric["error_code"] = (
+                    exc.diagnostic["error_code"]
+                    if isinstance(exc, SemanticQueryError)
+                    else type(exc).__name__
+                )
+                trace("SQL_KPI: " + json.dumps(metric))
             trace(f"TOOL run_sql: {step_id} failed: {str(exc)[:1000]}")
-            diagnostic = sql_diagnostic(
-                statement,
-                str(exc),
-                schemas,
-                phase=(
-                    "result_contract"
-                    if isinstance(exc, ResultContractError)
-                    else "execution"
-                ),
-                cacheable=isinstance(exc, ResultContractError),
-                bindings=bindings,
-            )
+            if isinstance(exc, SQLPreflightError):
+                diagnostic = exc.diagnostic.model_copy(
+                    update={
+                        "failed_sql": statement,
+                        "fingerprint": fingerprint,
+                    }
+                )
+            else:
+                diagnostic = sql_diagnostic(
+                    statement,
+                    str(exc),
+                    schemas,
+                    phase=(
+                        "result_contract"
+                        if isinstance(exc, ResultContractError)
+                        else "execution"
+                    ),
+                    cacheable=isinstance(exc, ResultContractError),
+                    bindings=bindings,
+                )
             if isinstance(exc, ResultContractError):
                 diagnostic.repair_instructions.append(
                     "Return the complete planned dataset; a date-only lookup cannot complete this step. Required output contract: "
@@ -645,6 +1059,9 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                     removed.append(result_id)
                 statement = ctx.deps.sql_step_statements.pop(key, None)
                 if statement is not None:
+                    ctx.deps.invalidated_sql_statements.setdefault(key, set()).add(
+                        statement
+                    )
                     ctx.deps.sources.queries.remove(statement)
             ctx.deps.completed_steps = ctx.deps.completed_steps[:start]
             ctx.deps.python_runs = [
@@ -664,19 +1081,24 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
             ]
             ctx.deps.last_python_error = None
             ctx.deps.last_sql_diagnostic = None
+            if semantic_catalog:
+                ctx.deps.sql_revision_required.add(sql_step_id)
             ctx.deps.input_repairs += 1
             repair = RepairFeedback(
                 target="sql_input_repair",
                 phase="input_contract",
                 step_id=sql_step_id,
                 diagnostic=reason,
-                artifact={"invalidated_result_ids": removed},
+                artifact={
+                    "invalidated_result_ids": removed,
+                    "rejected_query": ctx.deps.sql_logical_queries.get(sql_step_id),
+                },
                 authority={
                     "output_contract": plan.steps[start].output_contract.model_dump()
                 },
                 retries_remaining=2 - ctx.deps.input_repairs,
                 instructions=[
-                    "Regenerate this SQL input under its published contract; preserve unrelated completed evidence."
+                    "Supply a revised query=QueryIR to run_sql under its published contract; preserve unrelated completed evidence. Repeating the invalidated query is rejected before DataFusion execution."
                 ],
             )
             ctx.deps.repair_history.append(repair)
@@ -821,6 +1243,21 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                         raise ValueError(
                             f"Execute the published calculation method {current.calculation.method}; do not replace the chosen algorithm"
                         )
+                    if expected_method == "bernoulli_sum" and len(inputs) == 1:
+                        row_count = len(next(iter(inputs.values())))
+                        completed = [
+                            call
+                            for call in science.calls[science_start:]
+                            if call.get("operation") == expected_method
+                            and call.get("status") == "completed"
+                        ]
+                        if len(completed) == 1 and any(
+                            call.get("method", {}).get("observations") != row_count
+                            for call in completed
+                        ):
+                            raise ValueError(
+                                "Weighted Bernoulli simulation requires one event weight and probability per SQL observation. Do not regroup or drop the configured cohort rows before sampling."
+                            )
                 if science is not None and any(
                     call.get("status") in ("started", "cancelled")
                     for call in science.calls[science_start:]
@@ -883,7 +1320,7 @@ def create_agent(plan: ExecutionPlan, model: Model | None = None) -> Agent:
                 feedback = str(exc)[:2000]
                 if "suspend" in feedback or "suspension" in feedback:
                     feedback += (
-                        " Only approved scientific module functions may call the external worker. Batch calls within the suspension limit; undefined names are not callbacks. "
+                        " Only registered external-module functions may call the worker. Await each call and batch work within the suspension limit; undefined names are not callbacks. "
                         "Import modules and define all helper functions in this snippet; "
                         "read SQL inputs from data[result_id]."
                     )
@@ -999,4 +1436,5 @@ async def execute_plan(
         deps.completed_steps,
         deps.repair_history,
         deps.validation_receipts,
+        deps.sql_metrics,
     )

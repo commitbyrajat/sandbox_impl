@@ -30,6 +30,9 @@ from result_contracts import SQLResultContract, validate_contract_sources
 from scientific_models import scientific_catalog
 from calculation_contracts import AnalysisKind, CalculationMethod, PythonResultContract
 from repair_feedback import RepairFeedback, repair_handoff_messages
+from semantic_models import QueryIR, MetricSelection
+from semantic_query import SemanticCatalog, SemanticQueryError, compile_query
+from observation_planning import bind_observations
 
 
 class Objective(BaseModel):
@@ -96,6 +99,7 @@ class ExecutionStep(BaseModel):
     input_steps: list[str] = Field(default_factory=list)
     calculation: CalculationMethod | None = None
     result_contract: PythonResultContract | None = None
+    logical_query: QueryIR | None = None
 
 
 class ExecutionPlan(BaseModel):
@@ -108,6 +112,8 @@ class ExecutionPlan(BaseModel):
     execution_mode: Literal["sql", "sql_python", "none"]
     execution_reason: str | None = None
     sql_recipe: SqlRecipeCall | None = None
+    # Previously published/manual plans retain the original execution interface.
+    query_language: Literal["legacy_sql", "semantic"] = "legacy_sql"
     steps: list[ExecutionStep] = Field(max_length=12)
     validation_checks: list[str]
     python_reason: str | None = None
@@ -156,6 +162,8 @@ class ExecutionPlan(BaseModel):
             raise ValueError("Step IDs must be unique")
         prior_sql = set()
         for step in self.steps:
+            if step.action != "sql" and step.logical_query is not None:
+                raise ValueError("Only SQL steps declare logical_query")
             if step.action != "python" and (step.calculation or step.result_contract):
                 raise ValueError(
                     "Only Python steps declare calculation/result_contract"
@@ -212,6 +220,7 @@ class SchemaPlanningStep(ExecutionStep):
     input_steps: list[str] = Field(default_factory=list, max_length=0)
     calculation: None = None
     result_contract: None = None
+    logical_query: None = None
 
 
 class SQLPlanningStep(ExecutionStep):
@@ -220,6 +229,7 @@ class SQLPlanningStep(ExecutionStep):
     input_steps: list[str] = Field(default_factory=list, max_length=0)
     calculation: None = None
     result_contract: None = None
+    logical_query: QueryIR
 
 
 class PythonPlanningStep(ExecutionStep):
@@ -228,12 +238,14 @@ class PythonPlanningStep(ExecutionStep):
     input_steps: list[str] = Field(min_length=1)
     calculation: CalculationMethod
     result_contract: PythonResultContract
+    logical_query: None = None
 
 
 class PlannerOutput(ExecutionPlan):
     """LLM schema expresses step-specific constraints; stored plans stay compatible."""
 
     sql_recipe: None = None
+    query_language: Literal["semantic"] = "semantic"
     steps: list[
         Annotated[
             SchemaPlanningStep | SQLPlanningStep | PythonPlanningStep,
@@ -241,11 +253,140 @@ class PlannerOutput(ExecutionPlan):
         ]
     ] = Field(max_length=12)
 
+    @model_validator(mode="before")
+    @classmethod
+    def order_independent_stages(cls, value):
+        """Lifecycle order is host-owned; do not ask an LLM to repair a sort.
 
-def planner_output_type(analysis_kind: AnalysisKind | None):
+        SQL nodes cannot consume Python outputs in this IR, so all SQL producers
+        can precede their Python consumers. Unknown IDs and duplicate schemas
+        still fail the normal dependency/shape validation.
+        """
+        if not isinstance(value, dict) or value.get("execution_mode") == "none":
+            return value
+        steps = value.get("steps")
+        if not isinstance(steps, list) or not all(
+            isinstance(step, dict) for step in steps
+        ):
+            return value
+        steps = list(steps)
+        for index, step in enumerate(steps):
+            query = step.get("logical_query")
+            contract = step.get("output_contract")
+            if (
+                step.get("action") == "sql"
+                and isinstance(query, dict)
+                and query.get("metrics")
+                and not query.get("dimensions")
+                and isinstance(contract, dict)
+            ):
+                # A scalar aggregate has one output row and no entity identity.
+                # Population coverage is not an executable constraint on that row.
+                steps[index] = {
+                    **step,
+                    "output_contract": {
+                        **contract,
+                        "grain": [],
+                        "population": None,
+                        "min_rows": 1,
+                        "max_rows": 1,
+                    },
+                }
+        if not any(step.get("action") == "schema" for step in steps):
+            used = {step.get("step_id") for step in steps}
+            key = "host_schema"
+            while key in used:
+                key += "_"
+            steps.insert(
+                0,
+                {
+                    "step_id": key,
+                    "action": "schema",
+                    "instruction": "Verify registered column names and types against the selected source schemas.",
+                    "expected_output": "Verified scoped source metadata",
+                },
+            )
+        return {
+            **value,
+            "steps": sorted(
+                steps,
+                key=lambda step: {"schema": 0, "sql": 1, "python": 2}.get(
+                    step.get("action"), 3
+                ),
+            ),
+        }
+
+
+def planner_output_type(
+    analysis_kind: AnalysisKind | None,
+    catalog: SemanticCatalog | None = None,
+    observation_policies=None,
+):
     """Constrain a known business outcome in the wire schema, before generation."""
-    if analysis_kind is None:
+    sql_step_type = SQLPlanningStep
+    if catalog is not None:
+        selection = create_model(
+            "CatalogMetricSelection",
+            __base__=MetricSelection,
+            metric=(
+                Literal[tuple(sorted(catalog.metrics))],
+                Field(
+                    description="Select an exact metric ID from this workspace's catalog."
+                ),
+            ),
+        )
+        query_type = create_model(
+            "CatalogQueryIR",
+            __base__=QueryIR,
+            base_table=(Literal[tuple(sorted(catalog.tables))], ...),
+            metrics=(list[selection], Field(default_factory=list, max_length=30)),
+            relationships=(
+                (
+                    list[Literal[tuple(sorted(catalog.relationships))]]
+                    if catalog.relationships
+                    else list[str]
+                ),
+                Field(
+                    default_factory=list,
+                    max_length=15 if catalog.relationships else 0,
+                    description="Optional catalog relationship hints for ambiguous routes. The compiler completes missing edges; prefer [] when the path is unambiguous. Never SQL predicates or table.column expressions.",
+                ),
+            ),
+        )
+        sql_step_type = create_model(
+            "SQLPlanningStep", __base__=SQLPlanningStep, logical_query=(query_type, ...)
+        )
+    base_type = PlannerOutput
+    if catalog and observation_policies:
+
+        def bind_policy(cls, value):
+            return bind_observations(
+                value, catalog, observation_policies, analysis_kind
+            )
+
+        base_type = create_model(
+            "ObservationPlannerOutput",
+            __base__=PlannerOutput,
+            __validators__={
+                "bind_observation_policy": model_validator(mode="before")(bind_policy)
+            },
+        )
+    if analysis_kind is None and catalog is None:
         return PlannerOutput
+    if analysis_kind is None:
+        return create_model(
+            "CatalogPlannerOutput",
+            __base__=base_type,
+            steps=(
+                list[
+                    Annotated[
+                        SchemaPlanningStep | sql_step_type | PythonPlanningStep,
+                        Field(discriminator="action"),
+                    ]
+                ],
+                Field(max_length=12),
+            ),
+        )
     method_type = create_model(
         "RequestedCalculation",
         __base__=CalculationMethod,
@@ -258,11 +399,11 @@ def planner_output_type(analysis_kind: AnalysisKind | None):
     )
     return create_model(
         "RequestedPlannerOutput",
-        __base__=PlannerOutput,
+        __base__=base_type,
         steps=(
             list[
                 Annotated[
-                    SchemaPlanningStep | SQLPlanningStep | step_type,
+                    SchemaPlanningStep | sql_step_type | step_type,
                     Field(discriminator="action"),
                 ]
             ],
@@ -272,7 +413,8 @@ def planner_output_type(analysis_kind: AnalysisKind | None):
 
 
 class PlannerDiagnostics(AbstractCapability):
-    def __init__(self):
+    def __init__(self, catalog=None):
+        self.catalog = catalog
         self.latest_feedback = None
         self.owned_handoffs = set()
 
@@ -286,10 +428,25 @@ class PlannerDiagnostics(AbstractCapability):
 
     def on_output_validate_error(self, ctx, *, output_context, output, error):
         errors = (
-            error.errors(include_input=False, include_context=False, include_url=False)
+            error.errors(include_input=False, include_context=True, include_url=False)
             if isinstance(error, ValidationError)
             else str(error)
         )
+        query_context = self.query_validation_context(error, output)
+        if self.catalog:
+            for context in query_context:
+                context["selected_metric_definitions"] = {
+                    name: {
+                        **self.catalog.metrics[name].model_dump(),
+                        "source_grain": (
+                            self.catalog.tables[self.catalog.metrics[name].table].grain
+                            if self.catalog.metrics[name].table in self.catalog.tables
+                            else None
+                        ),
+                    }
+                    for name in context.pop("metric_ids", [])
+                    if name in self.catalog.metrics
+                }
         trace(
             "PLAN_REJECTED: "
             + json.dumps(
@@ -297,6 +454,7 @@ class PlannerDiagnostics(AbstractCapability):
                     "attempt": ctx.retry + 1,
                     "error_type": type(error).__name__,
                     "errors": errors,
+                    "query_context": query_context,
                 },
                 default=str,
             )
@@ -309,6 +467,7 @@ class PlannerDiagnostics(AbstractCapability):
             authority={
                 "schema": "PlannerOutput",
                 "workspace_guidance": "datasource.json and domain_instructions.json",
+                "query_output_requirements": query_context,
             },
             retries_remaining=max(0, 3 - ctx.retry),
             instructions=[
@@ -316,6 +475,83 @@ class PlannerDiagnostics(AbstractCapability):
             ],
         )
         raise ModelRetry(self.latest_feedback.publish()) from error
+
+    @staticmethod
+    def query_validation_context(error, output):
+        """Make alias/empty-projection errors actionable without dumping row data."""
+        if not isinstance(error, ValidationError):
+            return []
+        if isinstance(output, str):
+            try:
+                output = json.loads(output)
+            except ValueError:
+                output = {}
+        raw_steps = output.get("steps", []) if isinstance(output, dict) else []
+        contexts = []
+        for detail in error.errors(
+            include_input=True, include_context=False, include_url=False
+        ):
+            location = detail["loc"]
+            if (
+                not any(key in location for key in ("logical_query", "output_contract"))
+                or "steps" not in location
+            ):
+                continue
+            index = location[location.index("steps") + 1]
+            step = (
+                raw_steps[index]
+                if isinstance(index, int) and index < len(raw_steps)
+                else {}
+            )
+            query = step.get("logical_query") or detail.get("input")
+            if not isinstance(query, dict):
+                continue
+            contexts.append(
+                {
+                    "step_id": step.get("step_id"),
+                    "location": list(location),
+                    "required_output_aliases": list(
+                        (step.get("output_contract") or {}).get("required_columns", {})
+                    ),
+                    "grain": (step.get("output_contract") or {}).get("grain", []),
+                    "missing_grain_columns": sorted(
+                        set((step.get("output_contract") or {}).get("grain", []))
+                        - set(
+                            (step.get("output_contract") or {}).get(
+                                "required_columns", {}
+                            )
+                        )
+                    ),
+                    "missing_output_aliases": sorted(
+                        set(
+                            (step.get("output_contract") or {}).get(
+                                "required_columns", {}
+                            )
+                        )
+                        - {
+                            item.get("name")
+                            for section in ("dimensions", "metrics", "calculations")
+                            for item in query.get(section, [])
+                            if isinstance(item, dict)
+                        }
+                    ),
+                    "metric_ids": [
+                        item.get("metric")
+                        for item in query.get("metrics", [])
+                        if isinstance(item, dict)
+                    ],
+                    "population_remedy": "population is optional: set null for filtered/composite cohorts. Do not replace an invalid key with another balance, date or partial grouping key.",
+                    "selected_aliases": {
+                        section: [
+                            item.get("name")
+                            for item in query.get(section, [])
+                            if isinstance(item, dict)
+                        ]
+                        for section in ("dimensions", "metrics", "calculations")
+                    },
+                }
+            )
+        return contexts
 
 
 def consolidate_python_steps(plan: ExecutionPlan) -> ExecutionPlan:
@@ -387,6 +623,45 @@ outcome and leave implementation decisions to the planner.
 
 PLANNER_INSTRUCTIONS = """
 Create a concise, actionable execution plan from the question and classified intent.
+SQL execution uses a typed semantic QueryIR compiled by the host, never LLM SQL.
+Describe business metrics and output grain using semantic_metrics, semantic_tables
+and configured relationship meanings. The executor chooses catalog metric IDs,
+dimensions, filters and time selection; the compiler owns joins and aggregation.
+Do not prescribe SUM/MAX/GROUP BY or invent missing business metric definitions.
+For temporal probability metrics, preserve their configured observation horizon.
+For latest/latest_common selection, use the dynamic snapshot alone without a guessed
+date predicate. The actual stored snapshot key is authoritative; a calendar month
+does not imply a month-end date. Select a range for an explicitly bounded period.
+When the configured backend is MetricFlow, cumulative metric IDs use the catalog's
+cumulative definition. Group their source time field using an explicit day, month
+or year transform, and use one bounded time selection without duplicate date
+predicates. Use the input metric's own time column; a month grouping does not
+require joining another table that happens to contain a month column. Select only
+tables and relationship paths needed for the requested metrics, dimensions and
+filters. Do not invent a cumulative formula or cumulative-window SQL.
+Every SQL step must include logical_query as a QueryIR JSON object. Resolve its
+dimensions and catalog metric IDs now from the workspace metadata. The host
+validates and publishes this logical query, then executes it without asking for
+SQL or generating the same query again. Include every required output alias.
+Project each required alias exactly once: source identity/grouping fields belong
+in dimensions, catalog aggregate values in metrics, and genuinely new derived
+values in calculations. Do not repeat a selected column in calculations as a
+pass-through reference. Metric IDs are catalog lookups; names are output aliases.
+Preserve required canonical time and identity aliases. A composite observation
+is identified by its full grain tuple; it does not require an invented cohort_key.
+If a composite string identifier is needed, declare its concat calculation
+explicitly while keeping all required grain projections. Renaming month to a
+composite-key label does not construct a composite identity.
+dimensions and metrics must not both be empty. In alias correction feedback, fix
+the exact named locations; do not change amounts, grouping or filters to evade it.
+Table observation counts use metric ID <table>.__count. For catalog formulas,
+use their metric IDs rather than reconstructing their business logic in prose.
+Population contracts compare against the whole source population. Do not declare
+an unfiltered population for an intentionally filtered cohort analysis.
+Set output_contract.population to null for filtered composite cohorts and ordinary
+grouped reports. It is optional, not a request to choose any source column. Only
+whole registered entity retention uses a single-key population contract. Dates,
+balances, probabilities and a partial composite key are not entity identities.
 For Python steps declare calculation.kind and calculation.method (an available
 scientific.<function> or a named custom algorithm). Preserve the classified
 analysis_kind: equal-total balancing and similarity clustering are different tasks.
@@ -441,6 +716,9 @@ why SQL alone is insufficient. Publish the choice before execution, including
 the Python step when needed. The planner owns this decision, not the user.
 The scientific module provides SciPy k-means, bootstrap, distribution sampling,
 binomial/Bernoulli draws, resampling indices and Monte Carlo hypothesis tests.
+The executor also has bounded async numpy, pandas, scipy and statistics facades
+for implementation details. Plan business data and algorithms here; the executor
+receives their exact function signatures before generating code.
 Prefer these library operations to handwritten algorithms when they serve the
 question. Publish initialization, confidence/quantile method, seed and library RNG
 choices; NumPy seeded draws differ from Python random. Domain assumptions remain
@@ -470,10 +748,11 @@ List concise validation_checks for the requested results, including completeness
 filters, units, dates and join cardinality as applicable.
 The application publishes the validated plan before execution; do not add a
 publication tool step. Plan only schema, SQL and Python actions.
-Only catalog metadata is available now. SQL/code is generated during execution
-after schema inspection. Respect the supplied domain guidance and catalog metadata.
-Before schema inspection, describe required data concepts without asserting
-unverified column names. Validation checks are checks to perform, not claims that
+Only catalog metadata is available now. Generate logical_query using its registered
+columns and metric definitions, without SQL text. Schema inspection verifies the
+registry before the host compiles and executes SQL. Python code is generated after
+complete SQL inputs are known. Describe required data concepts in step prose;
+do not guess column names absent from the registry. Validation checks are checks to perform, not claims that
 they have already passed. Use supplied action rules when applicable; do not assume
 missing policies or request criteria that the user or workspace already provided.
 Request clarification or report missing inputs rather than planning a calculation
@@ -545,7 +824,7 @@ async def build_plan(
     workspace_id: str | int,
     model: Model,
 ) -> ExecutionPlan:
-    key, _ = get_workspace(workspace_id, tenant_id=tenant_id)
+    key, workspace = get_workspace(workspace_id, tenant_id=tenant_id)
     tenant_key = str(tenant_id)
     deferred = [
         DeferredObjective(objective=o.objective, clarification=o.clarification)
@@ -593,10 +872,26 @@ async def build_plan(
                 ],
                 validation_checks=spec.validation_checks,
             )
-    diagnostics = PlannerDiagnostics()
+    diagnostics = PlannerDiagnostics(
+        SemanticCatalog(
+            workspace.sources,
+            get_domain_profile(key, tenant_id=tenant_key),
+            workspace.semantic_planner,
+        )
+    )
     agent = Agent(
         model,
-        output_type=planner_output_type(intent.analysis_kind),
+        output_type=planner_output_type(
+            intent.analysis_kind,
+            SemanticCatalog(
+                workspace.sources,
+                get_domain_profile(key, tenant_id=tenant_key),
+                workspace.semantic_planner,
+            ),
+            get_domain_profile(key, tenant_id=tenant_key).observation_policies(
+                question
+            ),
+        ),
         capabilities=[diagnostics, ProcessHistory(diagnostics.handoff)],
         instructions=(
             PLANNER_INSTRUCTIONS
@@ -604,8 +899,19 @@ async def build_plan(
             + domain_context(key, tenant_id=tenant_key, stage="planner")
             + "\nWorkspace catalog:\n"
             + routing_catalog(key, tenant_id=tenant_key)
+            + "\nConfigured observation policies for this request:\n"
+            + json.dumps(
+                {
+                    name: policy.model_dump()
+                    for name, policy in get_domain_profile(key, tenant_id=tenant_key)
+                    .observation_policies(question)
+                    .items()
+                }
+            )
             + "\nAvailable scientific capabilities:\n"
-            + json.dumps(scientific_catalog(include_limits=True))
+            + json.dumps(
+                scientific_catalog(include_limits=True, include_external=False)
+            )
         ),
         retries=3,
         model_settings=model_settings(),
@@ -613,7 +919,20 @@ async def build_plan(
 
     @agent.output_validator
     def enforce_workspace(ctx: RunContext, plan: ExecutionPlan) -> ExecutionPlan:
+        # A successful schema validation supersedes its old correction. Any
+        # semantic validator rejection below must become the current feedback.
+        diagnostics.latest_feedback = None
         for step in plan.steps:
+            if step.logical_query is not None and step.logical_query._normalizations:
+                trace(
+                    "QUERY_IR_NORMALIZED: "
+                    + json.dumps(
+                        {
+                            "step_id": step.step_id,
+                            "changes": step.logical_query._normalizations,
+                        }
+                    )
+                )
             if step.action == "python" and intent.analysis_kind:
                 if (
                     not step.calculation
@@ -665,6 +984,77 @@ async def build_plan(
                     raise ModelRetry(
                         f"SQL step {step.step_id} output contract: {error}"
                     ) from error
+                try:
+                    catalog = SemanticCatalog(
+                        {name: workspace.sources[name] for name in plan.sources},
+                        get_domain_profile(key, tenant_id=tenant_key),
+                        workspace.semantic_planner,
+                    )
+                    compiled_query = compile_query(
+                        step.logical_query,
+                        catalog,
+                        population=step.output_contract.population,
+                    )
+                    step.logical_query = type(step.logical_query).model_validate(
+                        compiled_query.logical_plan
+                    )
+                    aliases = {
+                        item.name
+                        for item in [
+                            *step.logical_query.dimensions,
+                            *step.logical_query.metrics,
+                            *step.logical_query.calculations,
+                        ]
+                    }
+                    missing = set(step.output_contract.required_columns) - aliases
+                    if missing:
+                        raise SemanticQueryError(
+                            "MISSING_CONTRACT_OUTPUTS",
+                            "Logical query must project every required output alias. "
+                            "Preserve each requested identity dimension; do not rename one "
+                            "grain column to stand in for a composite key. For a derived "
+                            "identifier add an explicit calculation (such as concat of "
+                            "the grain fields), or use the existing grain columns as "
+                            "the observation identity and remove the unused synthetic key "
+                            "from the output contract.",
+                            missing=sorted(missing),
+                        )
+                except SemanticQueryError as error:
+                    feedback = RepairFeedback(
+                        target="planner",
+                        phase="semantic_query",
+                        step_id=step.step_id,
+                        diagnostic=str(error),
+                        artifact={"rejected_query": step.logical_query.model_dump()},
+                        authority={
+                            "output_contract": step.output_contract.model_dump(),
+                            "compiler_diagnostic": error.diagnostic,
+                            "selected_metrics": {
+                                item.metric: catalog.metrics[item.metric].model_dump()
+                                for item in step.logical_query.metrics
+                                if item.metric in catalog.metrics
+                            },
+                        },
+                        retries_remaining=max(0, 3 - ctx.retry),
+                        instructions=[
+                            "Correct the logical QueryIR using catalog metric definitions and valid relationship paths; do not generate SQL."
+                        ],
+                    )
+                    diagnostics.latest_feedback = feedback
+                    trace(
+                        "PLAN_REJECTED: "
+                        + json.dumps(
+                            {
+                                "attempt": ctx.retry + 1,
+                                "error_type": "SemanticQueryError",
+                                "step_id": step.step_id,
+                                "diagnostic": error.diagnostic,
+                                "rejected_query": step.logical_query.model_dump(),
+                                "output_contract": step.output_contract.model_dump(),
+                            }
+                        )
+                    )
+                    raise ModelRetry(feedback.publish()) from error
         profile = get_domain_profile(key, tenant_id=tenant_key)
         if any(
             re.search(pattern, question, re.IGNORECASE)

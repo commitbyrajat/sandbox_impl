@@ -91,7 +91,14 @@ Responsibilities are separated into modules:
 | `scientific_models.py` | Pydantic scientific requests, resource settings and Monty import type stubs |
 | `scientific_bridge.py` | Allowlisted async Monty module and supervised CPython worker lifecycle |
 | `scientific_worker.py` | Trusted SciPy/NumPy numerical operations and structured results |
+| `external_module_models.py` | Public NumPy/pandas/SciPy/statistics contracts, typed worker requests and scalar serialization |
+| `external_library_bridge.py` | Monty import facades for the registered async library functions |
+| `external_library_worker.py` | Bounded operations on real NumPy and pandas inside the numerical worker |
 | `sql_diagnostics.py` | SQLGlot preflight, engine result types, query fingerprints and repair diagnostics |
+| `semantic_models.py` | Typed QueryIR, table grain, measure policies and named business metric definitions |
+| `semantic_query.py` | Deterministic join planning, preaggregation, SQLGlot AST compilation and data consistency guards |
+| `observation_planning.py` | Bind configured analytical units, complete observation keys and stable ordering before plan publication |
+| `metricflow_adapter.py` | Scoped MetricFlow semantic manifests, native dataflow/SQL planning and a DataFusion syntax bridge |
 | `sql_joins.py` | Relationship keys bound to configured business meaning and grain rules |
 | `result_contracts.py` | SQL output aliases/types, unique observation grain and population checks before step completion |
 | `python_validation.py` | Preflight for sandbox imports, SQL-backed bindings, scientific API keys and directly traceable SQL aliases |
@@ -169,7 +176,9 @@ AGENT_SUMMARIZATION_ENABLED=false uv run agent.py --tenant-id 1 --workspace-id 1
   "How uncertain is average PAT per customer? Show the average and a 95% range."
 ```
 
-When disabled, the CLI returns the executor's report and preserves deferred
+When disabled, hybrid analyses return their retained Python outputs as formatted
+JSON, preserving exact group members and amounts instead of an unvalidated executor
+rewrite. SQL-only analyses retain the executor report. Both preserve deferred
 clarification questions. SQL/Python execution and tool validation still run;
 the separate domain summary and its numeric/topic guards are bypassed. Requests
 that need no data execution return the plan's clarification/response. Logs show
@@ -196,7 +205,72 @@ error and stored result columns to the LLM. A `run_sql` retry-limit error after
 a Python failure can mean the model tried to rerun SQL while the Python step was
 pending; `--trace` now reports these rejected out-of-order calls explicitly.
 
-Every LLM-generated `run_sql` proposal follows an enforced preflight loop:
+New LLM plans use **PydanticAI → QueryIR → semantic catalog → MetricFlow
+→ SQLGlot → DataFusion** in both configured workspaces. The planner includes `logical_query: QueryIR` in each SQL
+step; the host validates it before publication. `run_sql(step_id)` executes that
+published selection without asking the model to generate it again. The model
+selects catalog metric IDs, dimensions, filters and time;
+the compiler chooses aggregate functions, compound join keys, preaggregation and
+grouping. Missing definitions and ambiguous relationship paths return structured
+feedback rather than guessed SQL. See [semantic query compilation](docs/semantic-queries.md)
+for the catalog format, an example, supported operations and numerical checks.
+
+Complex queries now run as **dependent materialized SQL stages**. SQLGlot splits
+CTEs and independent subqueries, DataFusion compiles every stage before data is
+read, and typed Arrow results feed the next stage. Only the final validated rows
+go to Monty. `--trace` shows `SQL_STAGE n/N`; the stage artifact contains each
+executable statement. Defaults activate staging above 6,000 characters, at six
+SELECT scopes or at three joins. See [staged SQL settings and limits](docs/sql-staging.md).
+
+### MetricFlow semantic planning
+
+The pinned `metricflow==0.213.0` Python core builds real semantic manifests and
+dataflow plans from the workspace's catalog. MetricFlow resolves entity joins and
+generates aggregate, ratio, derived and cumulative SQL. The host first prepares
+sources at their declared grain and retains source consistency guards. No dbt
+warehouse adapter or additional LLM call is required.
+
+MetricFlow has no native DataFusion renderer. The adapter bridges its DuckDB SQL
+through SQLGlot, and DataFusion must compile the result before execution.
+`--trace` prints `METRICFLOW_PLAN` with a local audit file containing the resolved
+manifest, dataflow, original SQL, bridged SQL and hashes.
+
+Each workspace's `semantic_planner` in `datasource.json` selects the backend.
+Both workspaces use `backend: metricflow` and `unsupported: catalog`: explicitly
+unsupported cases, including whole-population completion for zero-activity
+customers, use the existing catalog compiler and emit `METRICFLOW_FALLBACK`.
+Choose `unsupported: error` to reject these instead. Semantic, source-scope and
+DataFusion failures never trigger this fallback. Cumulative requests cannot fall
+back to an instantaneous calculation.
+
+These business questions exercise ratios and cumulative metrics:
+
+```sh
+uv run agent.py --tenant-id 1 --workspace-id 1 --trace --max-tokens 8192 \
+  "Show the latest one-month probability of default by product variant and customer segment."
+
+uv run agent.py --tenant-id 1 --workspace-id 1 --trace --max-tokens 8192 \
+  "Show cumulative approved INR net spending at each month end from January through June 2026."
+
+uv run agent.py --tenant-id 2 --workspace-id 2 --trace --max-tokens 8192 \
+  "Show cumulative completed purchase amounts at each month end from January through June 2026."
+```
+
+Purchases in the third example exclude SIPs. Cumulative metrics need a bounded
+period within the configured time spine and an explicit catalog definition.
+See [MetricFlow configuration, audit files and limits](docs/metricflow.md).
+
+### Query validation
+
+`datasource.json` holds table grain/primary keys, measure additivity and required
+preaggregation. `domain_instructions.json` holds named business metrics, conditional
+measures, required population filters, formulas, bounds and probability horizons.
+For credit-loss inputs, destination transitions collapse to one row per origin
+cohort before joining exposures. Repeated opening balances must agree before
+`MAX` is used; transition sums also reconcile to their opening balance. Snapshot
+balances cannot silently be summed across months.
+
+Every compiled query follows an enforced preflight loop:
 
 1. SQLGlot parses a copy of the statement and qualifies its columns against the
    owned workspace's actual Arrow schemas. CTE/subquery projection failures are
@@ -213,11 +287,34 @@ Every LLM-generated `run_sql` proposal follows an enforced preflight loop:
 4. A failed proposal returns JSON diagnostics through `ModelRetry`, with scope
    issues, relevant source types and configured join meaning. The pending step
    and latest correction requirements are refreshed in the model instructions.
-   The LLM generates the revised SQL; the application does not rewrite it.
+   The LLM revises its logical QueryIR on compiler feedback; the application
+   deterministically recompiles SQL. Consistency guards are also compiled before
+   any result rows are accepted.
 5. Retrieved rows must satisfy the SQL step's `output_contract` before they are
    stored or the step completes. Missing fields, incorrect types, duplicate/null
    grain keys, row-count violations and configured population mismatches return
    correction feedback while keeping that SQL step pending.
+
+`--trace` includes `QUERY_COMPILED` with the logical selections, catalog hash,
+chosen relationships and preaggregated tables. `SQL_KPI` records attempt number,
+first-attempt status, logical-plan acceptance, SQLGlot/DataFusion acceptance and
+output-contract acceptance. These receipts measure compilation success separately
+from the numerical correctness covered by golden tests. They are not a guarantee
+that the LLM interpreted every business question correctly.
+
+Previously published/manual `ExecutionPlan` objects default to `legacy_sql` for
+compatibility. Newly generated `PlannerOutput` requires `query_language="semantic"`;
+the model's SQL tool schema omits `statement`, and SQL text is rejected. The raw
+`DataSources.query()` API and host-selected immutable recipes remain available.
+
+Planner schemas also constrain metric and relationship IDs to the workspace
+catalog. Projection validation distinguishes empty selections from conflicting
+aliases and reports exact locations. Identical repeated projections and identity
+reassignments are normalized; different expressions with the same alias remain
+errors. Whole-population contracts anchor joins at the population registry and
+keep related fact filters inside those joins, preserving zero-activity members.
+See [projection diagnostics and population rules](docs/semantic-queries.md) for
+details. These fixes retain the existing retry budgets.
 
 `datasource.json` also contains `sources.<source_id>.columns.<table>`, with every
 column's Arrow `type` and `nullable` flag for both workspaces. The scoped catalog
@@ -278,7 +375,10 @@ claim or copy an actual result, while preserving the validation checks.
 If the SQL inputs need correction, `request_sql_repair` can reopen a declared SQL
 producer at most **twice per request**. It preserves the published contract,
 invalidates downstream results and Python caches, and issues fresh result IDs.
-Stale result IDs cannot be reused after repair.
+Stale result IDs cannot be reused after repair. Reopened semantic inputs expose and
+require `query=QueryIR`; repeating the invalidated query is rejected before data
+execution. Compiler diagnostics reject guessed date predicates combined with
+`latest`/`latest_common`, avoiding empty month-start snapshots filtered to month end.
 
 `datasource.json` supplies machine-readable `relationship_keys`. Each entry has a
 relationship ID, `left_table`, `right_table` and `column_pairs`. The same ID under
@@ -287,9 +387,10 @@ relationship ID, `left_table`, `right_table` and `column_pairs`. The same ID und
 `aggregation_rules`. Both are bound in the schema tool's `_sql_guidance` before
 SQL generation and returned with relevant correction feedback. Existing narrative
 instructions remain in place, and legacy relationship equality strings remain
-supported. Business rules belong in configuration, not domain-specific Python
-branches. Configured cardinality is not an observed uniqueness check or proof
-that a query preserves measures; fan-out/grain warnings must still be reviewed.
+supported for legacy SQL validation. Semantic compilation uses structured keys
+and observed primary-key consistency checks. Business rules belong in
+configuration, not domain-specific Python branches. Additive measures are rejected
+when a join would repeat their observation grain without configured preaggregation.
 
 Failed deterministic preflight/compilation proposals are fingerprinted per request
 and step. Comments, formatting and unquoted identifier case do not bypass the
@@ -676,7 +777,7 @@ The summary must attribute fields using executed SQL, rather than guessed column
 
 For a hybrid plan, the host retrieves complete authorized query results and passes their typed rows into Monty as `data[result_id]`. The Monty worker performs only the generated Python calculation. It has no database connection, filesystem mount, query callback, DataFusion/PyArrow object or native DataFusion import. Python outputs return to the host and become evidence for the final summarizer. Tests verify that `import datafusion` fails inside Monty, while SQL succeeds in the host.
 
-SQL returns at most 200 rows with an explicit truncation flag. Python accepts selected `result_ids` only after SQL has run; it rejects unknown IDs and truncated results. Its `data` input maps result IDs to their typed rows, so dates and Decimal amounts survive the boundary. For example, `sum(row['value'] for row in data['query_1'])` processes a prior SQL result. Each invocation uses a fresh Monty checkout with a 32 MB heap and a five-second interpreter execution budget. The approved scientific module is the only host-function bridge. Generated Python receives no filesystem mounts, network APIs or database credentials. SciPy runs in a separate supervised worker with independent limits. DataFusion also runs outside Monty's resource limits; use the supplied small datasets.
+SQL returns at most 200 rows with an explicit truncation flag. Python accepts selected `result_ids` only after SQL has run; it rejects unknown IDs and truncated results. Its `data` input maps result IDs to their typed rows, so dates and Decimal amounts survive the boundary. For example, `sum(row['value'] for row in data['query_1'])` processes a prior SQL result. Each invocation uses a fresh Monty checkout with a 32 MB heap and a five-second interpreter execution budget. Registered external modules provide bounded worker callbacks. Generated Python receives no filesystem mounts, network APIs or database credentials. NumPy/pandas/SciPy run in a separate supervised worker with independent limits. DataFusion also runs outside Monty's resource limits; use the supplied small datasets.
 
 PostgreSQL snapshots refresh after classification and planning at the start of each applicable question. Schema and query results are sent to the configured LiteLLM model as context. LiteLLM must expose the model IDs declared in the tenant mapping. The CLI returns a clear error if a model or selected database is unavailable.
 
@@ -685,13 +786,15 @@ PostgreSQL snapshots refresh after classification and planning at the start of e
 Generated code imports the allowlisted **`scientific` module** and awaits its
 functions. Scientific algorithms execute in a separate CPython worker; Monty
 retains the generated code, complete authorized input rows and custom business
-calculations. Direct `import scipy` or `import numpy` inside Monty remains
-unsupported. The application process does not import the scientific libraries.
+calculations. `numpy`, `pandas`, `scipy` and `statistics` are also registered as
+async external-module facades. They expose the documented subset, rather than
+native arrays/DataFrames or unrestricted package APIs. See
+[external library APIs and examples](docs/external-libraries.md).
 
 ```text
 SQL contracts → typed data[result_id] → Monty
                                         ↕ approved async numerical calls
-                                  SciPy/NumPy worker
+                                SciPy/NumPy/pandas worker
 ```
 
 `scientific_capabilities.json` supplies signatures and policies to planning and
@@ -704,10 +807,12 @@ code generation. Both workspaces use the same domain-independent operations:
 | `await scientific.sample("normal", {"loc": 0, "scale": 1}, size=1000)` | Batched SciPy draws for general Monte Carlo calculations; supports normal, uniform, binomial and Bernoulli |
 | `await scientific.binomial(10, 0.5, size=1000)` | Binomial draws plus theoretical mean/variance |
 | `await scientific.bernoulli(0.5, size=1000)` | Coin flips (0/1) with the requested success probability |
+| `await scientific.bernoulli_sum(probabilities, weights)` | Trusted weighted-event simulation: one total per scenario, analytical expectation, simulated mean and nearest-rank quantile |
 | `await scientific.resample_indices(n, n_resamples=1000)` | NumPy index samples with replacement, for custom statistics on original Decimal rows |
 | `await scientific.monte_carlo_test(values)` | SciPy Monte Carlo hypothesis test; statistic, p-value and null distribution |
 
-General Monte Carlo outcome simulations use `sample`; a hypothesis-test p-value
+Weighted event-total forecasts use `bernoulli_sum`; other Monte Carlo outcome
+simulations can use `sample`. A hypothesis-test p-value
 does not answer a portfolio-loss distribution question. For example, probabilities
 for several cohorts can be passed as `{"p": probabilities}` with
 `size=[1000, len(probabilities)]` to obtain one batched Bernoulli simulation matrix.
@@ -751,7 +856,7 @@ Each call uses `Generator(PCG64)` with `SeedSequence([seed, stream])`. The defau
 are seed 42 and stream 0. Identical seed/stream inputs reproduce draws; use
 different streams for independent batches. These draws differ from Python
 `random`, even with seed 42. The pinned worker libraries are NumPy **2.5.4** and
-SciPy **1.18.1**. Results and `SCIENTIFIC_RESULT` trace events include actual
+SciPy **1.18.1**, with pandas **3.1.0**. Results and `SCIENTIFIC_RESULT` trace events include actual
 versions, RNG and method parameters. New seeded results need not match older
 handwritten algorithms bit for bit.
 
@@ -800,7 +905,7 @@ intent = asyncio.run(classify_question("Which AMC has the largest holdings?", te
 intent, plan = asyncio.run(plan_question("Which AMC has the largest holdings?", tenant_id="2", workspace_id="2"))
 ```
 
-Before sandbox execution, Python preparation checks unresolved global names, including names used inside lambdas, comprehensions and helper functions. A missing `Decimal` import is supplied from the sandbox-native `decimal` module. Other undefined names cause a correction request naming the missing identifiers. Replacing the host-provided `data` with copied literal rows is rejected; deriving a local view from the supplied input remains supported. Each snippet must define its helpers and import supported modules; only the allowlisted scientific module can issue external callbacks. Its imports and calls consume a bounded suspension allowance; all scientific functions must be awaited.
+Before sandbox execution, Python preparation checks unresolved global names, including names used inside lambdas, comprehensions and helper functions. A missing `Decimal` import is supplied from the sandbox-native `decimal` module. Other undefined names cause a correction request naming the missing identifiers. Replacing the host-provided `data` with copied literal rows is rejected; deriving a local view from the supplied input remains supported. Each snippet must define its helpers and import supported modules. Registered scientific/NumPy/pandas/SciPy/statistics functions consume a bounded suspension allowance and must be awaited; unsupported calls and missing awaits receive preflight feedback.
 
 Python calculation results must be structured, non-null values read from stored SQL inputs. A final `print(result)` is normalized to return `result`. Copied input rows are rejected when code does not read `data`; a null result leaves the calculation step pending for correction. Summarization requires the completed Python results, preventing printed-only output from triggering unsupported-number retries.
 

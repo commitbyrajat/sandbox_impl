@@ -16,4 +16,6 @@ wheels/
 
 # Published plans contain user questions and execution details.
 artifacts/plans/
+artifacts/metricflow/
+artifacts/sql_stages/
 .idea/

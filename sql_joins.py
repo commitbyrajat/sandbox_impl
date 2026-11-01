@@ -240,7 +240,21 @@ def review_joins(tree, bindings: Sequence[JoinBinding]):
                 and node.this.table != node.expression.table
                 for node in required_equalities
             )
-            if on is not None and on.find(exp.Or) is not None and not has_column_key:
+            # A disjunction must not bypass an asserted relationship equality.
+            # Pure inequality comparisons (for example Pareto self-comparisons)
+            # have no such key claim; retain their unverified-join warning.
+            has_disjunctive_key = on is not None and any(
+                isinstance(node.this, exp.Column)
+                and isinstance(node.expression, exp.Column)
+                and node.this.table != node.expression.table
+                for node in on.find_all(exp.EQ)
+            )
+            if (
+                on is not None
+                and on.find(exp.Or) is not None
+                and not has_column_key
+                and has_disjunctive_key
+            ):
                 issues.append(
                     {
                         "kind": "join_condition_not_guaranteed",

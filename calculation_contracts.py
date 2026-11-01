@@ -108,8 +108,15 @@ def select_values(value, path):
             elif isinstance(item, dict) and part in item:
                 next_values.append(item[part])
             else:
+                available = (
+                    f" Available keys at this level: {sorted(map(str, item))}."
+                    if isinstance(item, dict)
+                    else f" Received {type(item).__name__} at this level."
+                )
                 raise CalculationValidationError(
-                    f"Output path {path!r} is absent or has the wrong structure"
+                    f"Output path {path!r} is absent or has the wrong structure."
+                    + available
+                    + f" Return the required key {part!r} exactly as published; do not rename output fields."
                 )
         values = next_values
     return values

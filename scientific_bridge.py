@@ -13,6 +13,8 @@ import psutil
 from pydantic_monty import ExternalModule
 
 from scientific_models import REQUEST_ADAPTER, ScientificSettings, scientific_stubs
+from external_library_bridge import library_modules
+from external_module_models import module_catalog
 
 ROOT = Path(__file__).resolve().parent
 
@@ -168,7 +170,8 @@ class ScientificBridge:
         self.lock = asyncio.Lock()
         self.logger = logger or (lambda message: None)
         self.versions = {
-            name: importlib.metadata.version(name) for name in ("numpy", "scipy")
+            name: importlib.metadata.version(name)
+            for name in ("numpy", "scipy", "pandas")
         }
         self.fingerprint = hashlib.sha256(
             json.dumps(
@@ -176,6 +179,7 @@ class ScientificBridge:
                     "versions": self.versions,
                     "settings": self.settings.model_dump(),
                     "stubs": scientific_stubs(),
+                    "external_modules": module_catalog(),
                 },
                 sort_keys=True,
             ).encode()
@@ -321,6 +325,25 @@ class ScientificBridge:
                 stream=stream,
             )
 
+        async def bernoulli_sum(
+            probabilities,
+            weights,
+            *,
+            n_simulations=1000,
+            quantile=0.95,
+            seed=42,
+            stream=0,
+        ):
+            return await self.invoke(
+                "bernoulli_sum",
+                probabilities=probabilities,
+                weights=weights,
+                n_simulations=n_simulations,
+                quantile=quantile,
+                seed=seed,
+                stream=stream,
+            )
+
         async def monte_carlo_test(
             values,
             *,
@@ -345,6 +368,7 @@ class ScientificBridge:
             )
 
         return {
+            **library_modules(self),
             "scientific": ExternalModule(
                 {
                     "kmeans": kmeans,
@@ -352,9 +376,10 @@ class ScientificBridge:
                     "sample": sample,
                     "binomial": binomial,
                     "bernoulli": bernoulli,
+                    "bernoulli_sum": bernoulli_sum,
                     "resample_indices": resample_indices,
                     "monte_carlo_test": monte_carlo_test,
                 },
                 stubs=scientific_stubs(),
-            )
+            ),
         }

@@ -11,6 +11,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from test_agent import executable_plan, structured_response, tool_returns
 from test_support import ask
+from semantic_fixtures import count_query
 
 from agent import classify_question, plan_question
 from planning import ExecutionPlan, QuestionIntent
@@ -119,7 +120,7 @@ class PlanningTests(unittest.IsolatedAsyncioTestCase):
                             "run_sql",
                             {
                                 "step_id": "s2",
-                                "statement": "SELECT count(*) AS n FROM cc_customers",
+                                "query": count_query("cc_customers"),
                             },
                         )
                     ]
@@ -136,7 +137,12 @@ class PlanningTests(unittest.IsolatedAsyncioTestCase):
                             "run_sql",
                             {
                                 "step_id": "s2",
-                                "statement": "SELECT missing_column FROM cc_customers",
+                                "query": {
+                                    "base_table": "cc_customers",
+                                    "metrics": [
+                                        {"name": "n", "metric": "missing_column"}
+                                    ],
+                                },
                             },
                         )
                     ]
@@ -148,7 +154,7 @@ class PlanningTests(unittest.IsolatedAsyncioTestCase):
                             "run_sql",
                             {
                                 "step_id": "s2",
-                                "statement": "SELECT count(*) AS n FROM cc_customers",
+                                "query": count_query("cc_customers"),
                             },
                         )
                     ]

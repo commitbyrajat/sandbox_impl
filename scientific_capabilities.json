@@ -112,6 +112,25 @@
         "method": "dict[str, Any]"
       },
       "analysis_kind": "hypothesis_test"
+    },
+    "bernoulli_sum": {
+      "signature": "bernoulli_sum(probabilities: list[Number], weights: list[Number], *, n_simulations: int = 1000, quantile: float = 0.95, seed: int = 42, stream: int = 0) -> dict[str, Any]",
+      "description": "Distribution of weighted independent Bernoulli sums. Uses SciPy batched draws with shape [n_simulations, observations] and trusted NumPy summation across observations, one portfolio total per scenario. Returns the analytical expectation separately from the finite-simulation mean and nearest-rank quantile. General-purpose event weights may be negative. Use this for default-event, claim-event or weighted coin-flip scenario totals rather than hand-writing nested sampling/aggregation loops.",
+      "returns": {
+        "expected_value": "float",
+        "simulated_mean": "float",
+        "quantile": "float",
+        "quantile_level": "float",
+        "exceedance_fraction": "float",
+        "samples": "list[float]",
+        "method": "dict[str, Any]"
+      },
+      "analysis_kind": "simulation",
+      "compatible_kinds": [
+        "simulation",
+        "uncertainty",
+        "custom"
+      ]
     }
   },
   "calling_convention": "All functions are async host operations: import scientific; result = await scientific.kmeans(matrix). Monty supports top-level await. Await results before indexing; do not return coroutine objects."

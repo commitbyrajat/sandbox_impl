@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from semantic_models import SemanticPlannerConfig, TableSemantics
 
 ROOT = Path(__file__).resolve().parent
 SourceId = Literal["credit_cards", "smartwealth"]
@@ -18,6 +19,7 @@ class RelationshipKey(BaseModel):
     left_table: str = Field(min_length=1)
     right_table: str = Field(min_length=1)
     column_pairs: list[tuple[str, str]] = Field(min_length=1)
+    required_preaggregation: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class ColumnDefinition(BaseModel):
@@ -33,6 +35,7 @@ class SourceDefinition(BaseModel):
     description: str
     tables: dict[str, str]
     columns: dict[str, dict[str, ColumnDefinition]] = Field(default_factory=dict)
+    semantic_tables: dict[str, TableSemantics] = Field(default_factory=dict)
     relationships: list[str]
     relationship_keys: dict[str, RelationshipKey] = Field(default_factory=dict)
     notes: list[str]
@@ -43,6 +46,9 @@ class WorkspaceDefinition(BaseModel):
     name: str
     domain_profile: str = Field(min_length=1)
     sources: dict[SourceId, SourceDefinition] = Field(min_length=1)
+    semantic_planner: SemanticPlannerConfig = Field(
+        default_factory=SemanticPlannerConfig
+    )
 
 
 class ModelDefinition(BaseModel):

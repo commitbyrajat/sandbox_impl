@@ -71,8 +71,10 @@ class PreflightTests(unittest.TestCase):
             code, {"query_1": [{"id": "A", "value": Decimal("10")}]}, scientific=True
         )
 
-    def test_numpy_and_scipy_are_rejected_before_native_execution(self):
-        for module in ("numpy", "scipy", "pandas", "subprocess"):
+    def test_registered_modules_are_allowed_but_process_modules_are_rejected(self):
+        for module in ("numpy", "scipy", "pandas", "statistics"):
+            self.check(f"import {module}\nrows = data['query_1']\nrows")
+        for module in ("subprocess", "socket", "os"):
             with (
                 self.subTest(module=module),
                 self.assertRaisesRegex(
@@ -114,6 +116,19 @@ class PreflightTests(unittest.TestCase):
 
 
 class CalculationContractTests(unittest.TestCase):
+    def test_missing_output_feedback_identifies_actual_and_required_keys(self):
+        contract = PythonResultContract(required_fields={"quantile": "numeric"})
+        with self.assertRaises(CalculationValidationError) as rejected:
+            validate_python_result({"loss_95th_percentile": 12.0}, contract)
+        self.assertIn(
+            "Available keys at this level: ['loss_95th_percentile']",
+            str(rejected.exception),
+        )
+        self.assertIn(
+            "Return the required key 'quantile' exactly", str(rejected.exception)
+        )
+        validate_python_result({"quantile": 12.0}, contract)
+
     def test_count_accepts_container_paths_and_wildcard_matches_without_ambiguity(self):
         for path in ("groups", "groups.*"):
             contract = PythonResultContract(
@@ -387,7 +402,7 @@ class RepairRouteTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "step_id": "s3",
                     "result_ids": ["query_1"],
-                    "code": "import numpy as np\nrows = data['query_1']\nrows",
+                    "code": "import numpy as np\nrows = data['query_1']\nawait np.load('/etc/passwd')",
                 },
             ),
             (

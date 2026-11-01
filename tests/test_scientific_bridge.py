@@ -272,8 +272,9 @@ means = [sum((rows[i]['value'] for i in sample), Decimal('0')) / len(rows) for s
             binary_path=str(Path(sys.executable).parent / "monty")
         ) as pool:
             for code in (
-                "import scipy",
-                "import numpy",
+                "import scipy\nscipy.linalg.inv([[1]])",
+                "import numpy\nnumpy.load('/etc/passwd')",
+                "import pandas\npandas.read_csv('/etc/passwd')",
                 "import scientific\nscientific.eval('1')",
                 "import scientific\nscientific.open('/etc/passwd')",
             ):

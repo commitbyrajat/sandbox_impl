@@ -6,11 +6,13 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from unittest.mock import patch
 
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from test_agent import executable_plan, structured_response, tool_returns
 from test_support import ask
+from semantic_fixtures import holdings_query
 from test_tenants import answering_model
 
 from agent import classify_question
@@ -69,9 +71,7 @@ class BusinessPlanningTests(unittest.IsolatedAsyncioTestCase):
                             "run_sql",
                             {
                                 "step_id": "s2",
-                                "statement": "SELECT a.amc_name, sum(h.market_value) AS value "
-                                "FROM sw_holdings h JOIN sw_amcs a ON a.amc_id=h.amc_id "
-                                "GROUP BY a.amc_name ORDER BY value DESC, a.amc_name",
+                                "query": holdings_query(),
                             },
                         )
                     ]
@@ -110,7 +110,11 @@ groups
             )
 
         output = io.StringIO()
-        with tempfile.TemporaryDirectory() as directory, redirect_stderr(output):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            redirect_stderr(output),
+            patch.dict("os.environ", {"AGENT_SUMMARIZATION_ENABLED": "true"}),
+        ):
             answer = await ask(
                 question,
                 tenant_id="2",

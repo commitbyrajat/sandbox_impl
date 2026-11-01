@@ -11,6 +11,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from scientific_models import REQUEST_ADAPTER, ScientificSettings
+from external_module_models import NumpyRequest, NumpyRandomRequest, PandasRequest
+from external_library_worker import execute_library
 
 
 def resource_limits(settings):
@@ -32,6 +34,7 @@ def main():
     resource_limits(settings)
     import numpy as np
     import scipy
+    import pandas as pd
     from scipy import stats
     from scipy.cluster.vq import kmeans2
 
@@ -104,6 +107,55 @@ def main():
             "rng": "Generator(PCG64)/SeedSequence([seed, stream])",
             "numeric_dtype": "float64",
         }
+        if isinstance(req, (NumpyRequest, NumpyRandomRequest, PandasRequest)):
+            value, details = execute_library(req, settings, np, pd, rng)
+            return {"value": value, "method": {**meta, **details}}
+        if req.operation == "bernoulli_sum":
+            probabilities = vector(req.probabilities)
+            weights = vector(req.weights)
+            if len(probabilities) != len(weights):
+                raise ValueError(
+                    "Probabilities and event weights must have the same observation count"
+                )
+            bound(req.n_simulations, settings.max_resamples, "Simulations")
+            bound(
+                req.n_simulations * len(weights), settings.max_cells, "Simulation cells"
+            )
+            bound(
+                req.n_simulations * len(weights), settings.max_work, "Simulation work"
+            )
+            draws = stats.bernoulli.rvs(
+                probabilities, size=(req.n_simulations, len(weights)), random_state=rng
+            )
+            scenarios = np.sum(draws * weights, axis=1, dtype=np.float64)
+            expected = float(np.sum(probabilities * weights, dtype=np.float64))
+            if not np.isfinite(scenarios).all() or not math.isfinite(expected):
+                raise ValueError("Weighted Bernoulli sums produced non-finite outcomes")
+            meta.update(
+                library_api="scipy.stats.bernoulli.rvs + numpy.sum(axis=1) + numpy.quantile",
+                n_simulations=req.n_simulations,
+                observations=len(weights),
+                quantile=req.quantile,
+                quantile_level_pct=req.quantile * 100,
+                quantile_method="inverted_cdf",
+                probabilities=probabilities.tolist(),
+            )
+            return {
+                "expected_value": expected,
+                "simulated_mean": float(np.mean(scenarios)),
+                "quantile": float(
+                    np.quantile(scenarios, req.quantile, method="inverted_cdf")
+                ),
+                "quantile_level": req.quantile,
+                "exceedance_fraction": float(
+                    np.mean(
+                        scenarios
+                        > np.quantile(scenarios, req.quantile, method="inverted_cdf")
+                    )
+                ),
+                "samples": scenarios.tolist(),
+                "method": meta,
+            }
         if req.operation == "kmeans":
             n = len(req.observations)
             if not n or not req.observations[0]:

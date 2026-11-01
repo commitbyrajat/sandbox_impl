@@ -349,12 +349,16 @@ def preflight_sql(
     schemas: dict[str, pa.Schema],
     context: SessionContext,
     bindings: Sequence[JoinBinding] = (),
+    *,
+    compile_datafusion: bool = True,
+    review_relationships: bool = True,
+    max_statement_chars: int = 20000,
 ) -> SQLCheck:
     """Validate a copy in SQLGlot, then compile original SQL without fetching rows."""
     phase = "parse"
     try:
-        if len(statement) > 20_000:
-            raise ValueError("SQL must be at most 20,000 characters")
+        if len(statement) > max_statement_chars:
+            raise ValueError(f"SQL must be at most {max_statement_chars:,} characters")
         trees = sqlglot.parse(statement, read=DIALECT)
         if len(trees) != 1 or not isinstance(trees[0], exp.Query):
             raise ValueError("Only one SELECT query (optionally with CTEs) is allowed")
@@ -403,7 +407,9 @@ def preflight_sql(
                 statement, str(error), schemas, phase="configuration", bindings=bindings
             )
         ) from error
-    join_issues, reviewed, join_warnings = review_joins(qualified, bindings)
+    join_issues, reviewed, join_warnings = (
+        review_joins(qualified, bindings) if review_relationships else ([], [], [])
+    )
     if join_issues:
         diagnostic = sql_diagnostic(
             statement,
@@ -433,6 +439,19 @@ def preflight_sql(
             f"SQLGlot type inference unavailable ({type(error).__name__}); use the DataFusion result schema."
         )
 
+    if not compile_datafusion:
+        return SQLCheck(
+            datafusion_compiled=False,
+            result_schema=[],
+            inferred_types=inferred,
+            warnings=warnings,
+            reviewed_joins=reviewed,
+            all_join_keys_resolved=not any(
+                isinstance(warning, dict)
+                and warning.get("kind", "").startswith("unverified")
+                for warning in warnings
+            ),
+        )
     try:
         options = (
             SQLOptions()

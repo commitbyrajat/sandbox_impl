@@ -115,7 +115,7 @@ class SummaryEvidence:
 
         # Method literals are permitted only with method units, never as INR amounts.
         text = re.sub(
-            r"(?P<value>\d[\d,]*(?:\.\d+)?)\s+(?:bootstrap\s+)?(?:resamples|resamplings|samples|iterations)\b",
+            r"(?P<value>\d[\d,]*(?:\.\d+)?)\s+(?:bootstrap\s+)?(?:resamples|resamplings|samples|iterations|scenarios|simulations)\b",
             method_parameter,
             text,
             flags=re.IGNORECASE,
@@ -196,6 +196,9 @@ def prepare_evidence(
             confidence = numeric(method.get("confidence_level_pct"))
             if confidence is not None:
                 evidence.method_percentages.add(confidence)
+            quantile_pct = numeric(method.get("quantile_level_pct"))
+            if quantile_pct is not None:
+                evidence.method_percentages.add(quantile_pct)
         try:
             tree = ast.parse(run.get("code", ""))
         except SyntaxError:
