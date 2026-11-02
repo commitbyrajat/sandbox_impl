@@ -96,6 +96,11 @@ def stage_outcome(name, context) -> dict:
         }
     if name == "execute" and context.execution:
         execution = context.execution
+        source_runs = {
+            run.get("step_id"): run
+            for run in execution.python_runs
+            if run.get("executed") and run.get("code")
+        }
         return {
             "completed_steps": execution.completed_steps,
             "query_count": len(execution.queries),
@@ -119,6 +124,13 @@ def stage_outcome(name, context) -> dict:
                 {
                     "step_id": run.get("step_id"),
                     "executed": run.get("executed"),
+                    "code": (
+                        run
+                        if run.get("executed")
+                        else source_runs.get(run.get("reused_from_step_id"), {})
+                    ).get("code"),
+                    "result_ids": run.get("result_ids", []),
+                    "reused_from_step_id": run.get("reused_from_step_id"),
                     "output": calculation_preview(run.get("output")),
                 }
                 for run in execution.python_runs

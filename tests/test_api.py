@@ -13,6 +13,7 @@ from pipeline import Pipeline
 from planning import QuestionIntent
 from progress import PROGRESS_SINK, emit_progress
 from runtime import trace
+from execution import ExecutionResult
 from test_pipeline import adapters
 
 
@@ -111,6 +112,69 @@ class APITests(unittest.TestCase):
             )
         )
         self.assertFalse(any(e["kind"] == "result" for e in data))
+
+    def test_execution_evidence_preserves_exact_sql_and_python_source(self):
+        sql = "-- ₹ inputs\nSELECT customer_id\nFROM cc_customers;\n"
+        code = '# ₹ source <script> is text\nrows = data["query_1"]\nif rows:\n\tresult = {"count": len(rows)}\nresult\n'
+
+        def factory():
+            pipeline = fake_pipeline()
+
+            async def execute(*args):
+                return ExecutionResult(
+                    "Complete",
+                    {},
+                    [sql],
+                    [
+                        {
+                            "step_id": "py3",
+                            "code": code,
+                            "executed": True,
+                            "result_ids": ["query_1"],
+                            "output": {"count": 20},
+                        },
+                        {
+                            "step_id": "py4",
+                            "executed": False,
+                            "reused_from_step_id": "py3",
+                            "result_ids": ["query_1"],
+                            "output": {"count": 20},
+                        },
+                        {
+                            "step_id": "py5",
+                            "executed": False,
+                            "reused_from_step_id": "unretained",
+                            "output": {"count": 20},
+                        },
+                    ],
+                    ["s1", "s2", "py3", "py4"],
+                )
+
+            pipeline.services.execute = execute
+
+            async def summary(*args):
+                return "20 customers."
+
+            pipeline.services.summarize = summary
+            return pipeline
+
+        response = TestClient(create_app(factory)).post(
+            "/api/questions/stream", json=self.body
+        )
+        outcome = next(
+            event["outcome"]
+            for event in events(response)
+            if event.get("stage") == "execute" and event.get("status") == "completed"
+        )
+        self.assertEqual(outcome["queries"], [sql])
+        first, reused, unavailable = outcome["calculations"]
+        self.assertEqual(first["code"], code)
+        self.assertEqual(first["result_ids"], ["query_1"])
+        self.assertTrue(first["executed"])
+        self.assertEqual(reused["code"], code)
+        self.assertFalse(reused["executed"])
+        self.assertEqual(reused["reused_from_step_id"], "py3")
+        self.assertIsNone(unavailable["code"])
 
     def test_error_messages_redact_secrets_and_connection_credentials(self):
         def fail():

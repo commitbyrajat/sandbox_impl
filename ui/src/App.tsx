@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   ArrowDownToLine,
@@ -48,6 +48,8 @@ import type {
   Tenant,
   Workspace,
 } from './api'
+
+const ExecutionEvidence = lazy(() => import('./ExecutionEvidence'))
 
 const DEFAULT_STAGES: StageDefinition[] = [
   {
@@ -214,82 +216,11 @@ function Outcome({ stage }: { stage: StageState }) {
         </>
       )}
       {stage.id === 'execute' && (
-        <>
-          <div className="execution-stats">
-            <div>
-              <strong>{display(data.query_count)}</strong>
-              <span>SQL statements</span>
-            </div>
-            <div>
-              <strong>
-                {asList(data.datasets).reduce(
-                  (sum, item) => sum + Number(item.row_count || 0),
-                  0,
-                )}
-              </strong>
-              <span>Result rows</span>
-            </div>
-            <div>
-              <strong>{asList(data.calculations).length}</strong>
-              <span>Calculations</span>
-            </div>
-          </div>
-          {asList(data.datasets).map((dataset: Record<string, unknown>, i) => (
-            <div className="dataset" key={i}>
-              <b>{display(dataset.result_id)}</b>
-              <span>
-                {display(dataset.row_count)} rows
-                {dataset.truncated ? ' · preview is truncated' : ''}
-              </span>
-              <div className="data-table">
-                <table>
-                  <thead>
-                    <tr>
-                      {asList(dataset.columns)
-                        .slice(0, 6)
-                        .map((c, j) => (
-                          <th key={j}>{display(c)}</th>
-                        ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {asList(dataset.preview).map((row, j) => (
-                      <tr key={j}>
-                        {asList(dataset.columns)
-                          .slice(0, 6)
-                          .map((c, k) => (
-                            <td key={k}>{display(row[String(c)])}</td>
-                          ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <small>Showing up to 5 rows and 6 columns.</small>
-            </div>
-          ))}
-          {asList(data.calculations).map((calculation, i) => (
-            <details className="raw-outcome" key={i}>
-              <summary>
-                Calculation result · {display(calculation.step_id)}
-              </summary>
-              <pre>{pretty(calculation.output)}</pre>
-            </details>
-          ))}
-          {asList(data.queries).length > 0 && (
-            <details className="raw-outcome">
-              <summary>
-                View executed SQL ({asList(data.queries).length})
-              </summary>
-              {asList(data.queries).map((sql, i) => (
-                <div className="query-block" key={i}>
-                  <small>STATEMENT {i + 1}</small>
-                  <pre>{display(sql)}</pre>
-                </div>
-              ))}
-            </details>
-          )}
-        </>
+        <Suspense
+          fallback={<div className="muted">Loading execution evidence…</div>}
+        >
+          <ExecutionEvidence data={data} />
+        </Suspense>
       )}
       {stage.id === 'validate_results' && (
         <>
@@ -512,7 +443,7 @@ function Journey({
                 <>
                   {current.outcome &&
                   Object.keys(current.outcome).length > 0 ? (
-                    <Outcome stage={current} />
+                    <Outcome key={`${run.id}-${current.id}`} stage={current} />
                   ) : (
                     <div className="stage-empty">
                       {current.status === 'running' ? (

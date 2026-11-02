@@ -36,6 +36,13 @@ registry. The selector enforces workspace ownership before model execution.
 - Watch all eight real lifecycle stages. Select a stage to inspect its outcome,
   source/result metadata, queries or calculation results. **Activity** shows tool
   calls, SQL sub-stages and correction attempts; **Follow live** follows the current stage.
+- **Run analysis → Outcome** separates **SQL**, **Python** (when used) and **Results**.
+  Numbered SQL cards list every recorded statement in execution order. Source panels
+  include syntax highlighting, line numbers, visual line wrapping, expand/collapse,
+  and exact-source copy/download controls. Python panels show the retained code
+  actually executed in Monty and its SQL input IDs. Reused results are labelled
+  separately; unavailable source is stated explicitly. Existing in-session runs
+  captured before this update do not gain missing Python source retroactively.
 - The final Markdown answer appears only after the result event. Tables render
   normally, raw HTML is not enabled, and answers can be copied or downloaded.
 - **Stop** closes the stream and cancels the request task. A synchronous DataFusion
@@ -97,4 +104,6 @@ yarn test
 Browser tests start a separate API on port 8012 and Vite on 5174. Their delayed,
 deterministic pipeline is confined to `tests/ui_fixture_server.py`; `api:app` always
 uses the real pipeline. Tests cover progressive event delivery, stage evidence,
-tenant selection, errors, stopping, history, mobile layout and chunked UTF-8 SSE.
+tenant selection, errors, stopping, history, mobile layout, chunked UTF-8 SSE,
+exact source copy/download and reused-result labels. The Python evidence fixture
+runs its sample calculation in Monty.

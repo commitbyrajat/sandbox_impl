@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { consumeEvents } from '../src/api'
+import { readFile } from 'node:fs/promises'
 
 test('workspace selection is tenant scoped and suggestions follow its domain', async ({
   page,
@@ -151,4 +152,139 @@ test('SSE parser supports split UTF-8, CRLF, multi-line data and rejects an inte
   await expect(
     consumeEvents(new Response('data: {"kind":"ready"}\n\n'), () => {}),
   ).rejects.toThrow('before the analysis finished')
+})
+
+test('all SQL statements and exact sandbox source are browsable and downloadable', async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.goto('/')
+  await expect(page.locator('#workspace')).toHaveValue('1')
+  const responsePromise = page.waitForResponse((response) =>
+    response.url().endsWith('/api/questions/stream'),
+  )
+  await page
+    .getByLabel('Your analysis question')
+    .fill('Show Python execution evidence')
+  await page.getByRole('button', { name: 'Run analysis', exact: true }).click()
+  await expect(page.getByLabel('Final answer')).toBeVisible()
+  const response = await responsePromise
+  const events = (await response.text())
+    .split('\n')
+    .filter((line) => line.startsWith('data: '))
+    .map((line) => JSON.parse(line.slice(6)))
+  const evidence = events.find(
+    (event) => event.stage === 'execute' && event.status === 'completed',
+  ).outcome
+  await page
+    .getByRole('button', { name: 'Run analysis: completed', exact: true })
+    .click()
+  await expect(
+    page.getByRole('tab', { name: 'SQL 3', exact: true }),
+  ).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.execution-code-card.sql')).toHaveCount(3)
+  await page.getByRole('button', { name: 'Expand all', exact: true }).click()
+  for (const title of ['Statement 01', 'Statement 02', 'Statement 03']) {
+    await expect(
+      page.getByLabel(`${title} source code`, { exact: true }),
+    ).toBeVisible()
+  }
+  await expect(
+    page.locator('.execution-code-card.sql .token.keyword').first(),
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Copy Statement 03', exact: true })
+    .click()
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    evidence.queries[2],
+  )
+  await page.getByRole('tab', { name: 'Python 1', exact: true }).click()
+  await expect(
+    page.getByLabel('Python · py3 source code', { exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByLabel('Python · py3 source code', { exact: true }),
+  ).toContainText('from decimal import Decimal')
+  await expect(
+    page.getByText('Monty sandbox · Inputs: query_1', { exact: true }),
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Copy Python · py3', exact: true })
+    .click()
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    evidence.calculations[0].code,
+  )
+  const downloadPromise = page.waitForEvent('download')
+  await page
+    .getByRole('button', { name: 'Download Python · py3', exact: true })
+    .click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toBe('analysis-py3.py')
+  expect(await readFile((await download.path())!, 'utf8')).toBe(
+    evidence.calculations[0].code,
+  )
+  await page.getByRole('tab', { name: 'Results 1', exact: true }).click()
+  await expect(page.locator('.evidence-dataset')).toContainText('amount_inr')
+  await page.getByText('Calculation output · py3', { exact: true }).click()
+  await expect(page.locator('.calculation-result pre')).toContainText('13.25')
+})
+
+test('SQL-only analyses do not show Python and reused results are labelled accurately', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await expect(page.locator('#workspace')).toHaveValue('1')
+  await page.getByLabel('Your analysis question').fill('Count customers')
+  await page.getByRole('button', { name: 'Run analysis', exact: true }).click()
+  await expect(page.getByLabel('Final answer')).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Run analysis: completed', exact: true })
+    .click()
+  await expect(page.getByRole('tab', { name: /^Python/ })).toHaveCount(0)
+  await page
+    .getByLabel('Your analysis question')
+    .fill('Show Python reuse evidence')
+  await page.getByRole('button', { name: 'Run analysis', exact: true }).click()
+  await expect(page.getByLabel('Final answer')).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Run analysis: completed', exact: true })
+    .click()
+  await page.getByRole('tab', { name: 'Python 2', exact: true }).click()
+  await expect(
+    page
+      .getByRole('article', { name: 'Python · py3', exact: true })
+      .getByText('Executed', { exact: true }),
+  ).toBeVisible()
+  await expect(
+    page
+      .getByRole('article', { name: 'Python · py4', exact: true })
+      .getByText('Reused', { exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByLabel('Python · py4 source code', { exact: true }),
+  ).toContainText('from decimal import Decimal')
+})
+
+test('execution code remains contained on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  await expect(page.locator('#workspace')).toHaveValue('1')
+  await page
+    .getByLabel('Your analysis question')
+    .fill('Show Python execution evidence')
+  await page.getByRole('button', { name: 'Run analysis', exact: true }).click()
+  await expect(page.getByLabel('Final answer')).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Run analysis: completed', exact: true })
+    .click()
+  await page.getByRole('tab', { name: 'Python 1', exact: true }).click()
+  await expect(
+    page.getByLabel('Python · py3 source code', { exact: true }),
+  ).toBeVisible()
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true)
 })
